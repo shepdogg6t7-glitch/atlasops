@@ -2,7 +2,7 @@ import uuid
 from sqlalchemy import Column, String, ForeignKey, Integer
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
-from database import Base
+from apps.api.database import Base
 
 
 class Organization(Base):

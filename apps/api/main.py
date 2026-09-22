@@ -8,9 +8,9 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from aiokafka import AIOKafkaProducer
 
-from database import engine, get_db, Base
-import models
-from storage import ensure_bucket, upload_fileobj
+from apps.api.database import engine, get_db, Base
+from apps.api import models
+from apps.api.storage import ensure_bucket, upload_fileobj
 
 Base.metadata.create_all(bind=engine)
 ensure_bucket()
