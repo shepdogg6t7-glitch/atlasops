@@ -1,23 +1,45 @@
+# Environment / secrets
 .env
 .env.*
 !.env.example
+
+# Node / Next.js
 node_modules/
 .next/
 dist/
 coverage/
+
+# Python
 __pycache__/
 .venv/
 venv/
+
+# Logs
 *.log
+
+# Local databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Local service data
 postgres-data/
 redis-data/
 minio-data/
 redpanda-data/
+
+# Terraform
 .terraform/
 *.tfstate
 *.tfstate.*
 *.tfvars
 !example.tfvars
+
+# Private keys / secrets
 *.pem
 *.key
 secrets/
+
+# IDE
+.vscode/
+.idea/
