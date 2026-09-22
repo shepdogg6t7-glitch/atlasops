@@ -1,9 +1,12 @@
 import os
 import uuid
+import json
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
+from aiokafka import AIOKafkaProducer
 
 from database import engine, get_db, Base
 import models
@@ -12,7 +15,21 @@ from storage import ensure_bucket, upload_fileobj
 Base.metadata.create_all(bind=engine)
 ensure_bucket()
 
-app = FastAPI(title="AtlasOps API")
+REDPANDA_BOOTSTRAP = os.getenv("REDPANDA_BOOTSTRAP", "localhost:19092")
+
+producer: AIOKafkaProducer | None = None
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global producer
+    producer = AIOKafkaProducer(bootstrap_servers=REDPANDA_BOOTSTRAP)
+    await producer.start()
+    yield
+    await producer.stop()
+
+
+app = FastAPI(title="AtlasOps API", lifespan=lifespan)
 
 cors_origin = os.getenv("CORS_ORIGIN", "http://localhost:3000")
 app.add_middleware(
@@ -60,7 +77,7 @@ def create_project(org_id: uuid.UUID, payload: ProjectCreate, db: Session = Depe
 
 
 @app.post("/projects/{project_id}/documents")
-def upload_document(project_id: uuid.UUID, file: UploadFile = File(...), db: Session = Depends(get_db)):
+async def upload_document(project_id: uuid.UUID, file: UploadFile = File(...), db: Session = Depends(get_db)):
     project = db.query(models.Project).filter(models.Project.id == project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -83,6 +100,9 @@ def upload_document(project_id: uuid.UUID, file: UploadFile = File(...), db: Ses
     db.add(doc)
     db.commit()
     db.refresh(doc)
+
+    event = {"event": "document.uploaded", "document_id": str(doc.id), "project_id": str(project_id)}
+    await producer.send_and_wait("document.uploaded", json.dumps(event).encode("utf-8"))
 
     return {
         "id": str(doc.id),
