@@ -9,3 +9,5 @@ aiokafka==0.14.0
 pypdf==6.19.0
 sentence-transformers==6.1.0
 pgvector==0.2.0
+pytest==7.4.3
+pytest-asyncio==0.21.1
