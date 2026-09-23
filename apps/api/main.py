@@ -6,7 +6,9 @@ from fastapi import FastAPI, Depends, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from aiokafka import AIOKafkaProducer
+from sentence_transformers import SentenceTransformer
 
 from apps.api.database import engine, get_db, Base
 from apps.api import models
@@ -18,6 +20,7 @@ ensure_bucket()
 REDPANDA_BOOTSTRAP = os.getenv("REDPANDA_BOOTSTRAP", "localhost:19092")
 
 producer: AIOKafkaProducer | None = None
+embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
 
 
 @asynccontextmanager
@@ -52,6 +55,11 @@ class OrganizationCreate(BaseModel):
 
 class ProjectCreate(BaseModel):
     name: str
+
+
+class SemanticSearchQuery(BaseModel):
+    query: str
+    limit: int = 10
 
 
 @app.post("/organizations")
@@ -118,4 +126,40 @@ def list_documents(project_id: uuid.UUID, db: Session = Depends(get_db)):
     return [
         {"id": str(d.id), "filename": d.filename, "size_bytes": d.size_bytes, "status": d.status}
         for d in docs
+    ]
+
+
+@app.post("/projects/{project_id}/search")
+def semantic_search(project_id: uuid.UUID, payload: SemanticSearchQuery, db: Session = Depends(get_db)):
+    # Generate embedding for query
+    query_embedding = embedding_model.encode(payload.query).tolist()
+
+    # Search for similar chunks in this project
+    chunks = (
+        db.query(
+            models.Chunk.id,
+            models.Chunk.content,
+            models.Chunk.chunk_index,
+            models.Document.id.label("document_id"),
+            models.Document.filename,
+            models.Chunk.embedding.cosine_distance(query_embedding).label("distance")
+        )
+        .join(models.Document, models.Chunk.document_id == models.Document.id)
+        .filter(models.Document.project_id == project_id)
+        .filter(models.Chunk.embedding.isnot(None))
+        .order_by("distance")
+        .limit(payload.limit)
+        .all()
+    )
+
+    return [
+        {
+            "chunk_id": str(c.id),
+            "document_id": str(c.document_id),
+            "filename": c.filename,
+            "chunk_index": c.chunk_index,
+            "text": c.content,
+            "similarity_score": 1 - c.distance  # Convert distance to similarity (0-1)
+        }
+        for c in chunks
     ]
