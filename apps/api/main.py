@@ -138,11 +138,11 @@ def semantic_search(project_id: uuid.UUID, payload: SemanticSearchQuery, db: Ses
     chunks = (
         db.query(
             models.Chunk.id,
-            models.Chunk.text,
+            models.Chunk.content,
             models.Chunk.chunk_index,
             models.Document.id.label("document_id"),
             models.Document.filename,
-            func.cosine_distance(models.Chunk.embedding, query_embedding).label("distance")
+            models.Chunk.embedding.cosine_distance(query_embedding).label("distance")
         )
         .join(models.Document, models.Chunk.document_id == models.Document.id)
         .filter(models.Document.project_id == project_id)
@@ -158,7 +158,7 @@ def semantic_search(project_id: uuid.UUID, payload: SemanticSearchQuery, db: Ses
             "document_id": str(c.document_id),
             "filename": c.filename,
             "chunk_index": c.chunk_index,
-            "text": c.text,
+            "text": c.content,
             "similarity_score": 1 - c.distance  # Convert distance to similarity (0-1)
         }
         for c in chunks

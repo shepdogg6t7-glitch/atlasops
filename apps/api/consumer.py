@@ -136,7 +136,7 @@ def process_document(document_id: str):
                 id=uuid.uuid4(),
                 document_id=document.id,
                 chunk_index=index,
-                text=chunk,
+                content=chunk,
                 embedding=embedding.tolist(),
             )
             db.add(chunk_obj)

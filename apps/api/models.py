@@ -47,13 +47,14 @@ class Document(Base):
 
 
 class Chunk(Base):
-    __tablename__ = "chunks"
+    __tablename__ = "document_chunks"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     document_id = Column(UUID(as_uuid=True), ForeignKey("documents.id"), nullable=False)
     chunk_index = Column(Integer, nullable=False)
-    text = Column(Text, nullable=False)
-    embedding = Column(Vector(1536), nullable=True)  # 1536 dims for OpenAI embeddings
+    content = Column(Text, nullable=False)
+    embedding = Column(Vector(384), nullable=True)  # 384 dims (all-MiniLM-L6-v2)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
     document = relationship("Document", back_populates="chunks")
+
