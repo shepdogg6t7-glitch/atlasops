@@ -63,11 +63,34 @@ uvicorn apps.api.main:app --reload
 The API is then available at http://localhost:8000. On first run,
 the SentenceTransformer model downloads automatically (~90MB).
 
+To run the web app in a second terminal:
+
+```bash
+cd apps/web
+npm install
+npm run dev
+```
+
+Open http://localhost:3000 to register/sign in, create a project, and upload documents.
+
 ## API Endpoints
 
+- `POST /auth/register` — create an account and isolated organization; passwords must be at least 12 characters
+- `POST /auth/login` — exchange email/password credentials for a 30-minute bearer token
+- `GET /organizations` — list organizations belonging to the authenticated user
+- `GET /organizations/{organization_id}/projects` — list projects in an organization the user belongs to
+- `POST /organizations` and `POST /organizations/{organization_id}/projects` — create organizations/projects
 - `POST /projects/{project_id}/documents` — upload a PDF; creates the document record and emits an ingestion event
-- `GET /projects/{project_id}/documents/{document_id}` — check indexing status (`is_indexed`)
+- `GET /projects/{project_id}/documents` — list the authenticated user's documents in a project
 - `POST /projects/{project_id}/search` — semantic search; returns top-N chunks with similarity scores
+
+Every `/organizations` and `/projects` endpoint requires an `Authorization: Bearer <token>` header. Project access is checked against the authenticated user's organization membership. Set `JWT_SECRET` in `.env` to a randomly generated value of at least 32 characters before starting the API, for example:
+
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(48))"
+```
+
+The API will not start or issue tokens when `JWT_SECRET` is missing or invalid; no development signing key is built in. The web app defaults to `http://localhost:8000` for the API. Set `NEXT_PUBLIC_API_BASE_URL` in the web process environment or `apps/web/.env.local` when the API uses a different address. Login state is held in memory and is cleared when the page reloads. Use HTTPS when exposing the API beyond a trusted local network.
 
 See [MILESTONE_2.md](MILESTONE_2.md) for the full endpoint specification, request/response schemas, and usage examples.
 
@@ -97,4 +120,3 @@ Test configuration is in `pytest.ini` (asyncio auto mode, tests under `apps/api/
 ## License
 
 Apache 2.0 — see [LICENSE](LICENSE).
-

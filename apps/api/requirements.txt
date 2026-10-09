@@ -9,5 +9,7 @@ aiokafka==0.14.0
 pypdf==6.19.0
 sentence-transformers==6.1.0
 pgvector==0.2.0
+argon2-cffi==25.1.0
+PyJWT==2.10.1
 pytest==7.4.3
 pytest-asyncio==0.21.1
