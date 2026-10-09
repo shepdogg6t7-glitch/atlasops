@@ -29,3 +29,16 @@ However, the SQL migration script is recommended to ensure proper indexing and e
   - Adds `is_indexed` and `indexed_at` tracking to documents
   - Creates `chunks` table with IVFFlat index for fast similarity search
   - Backward compatible: uses `IF NOT EXISTS` clauses
+- **002_authentication.sql**: Adds the users and organization membership tables required for authentication and tenant authorization
+
+Organizations that existed before authentication have no owner mapping and are intentionally inaccessible to new accounts. After registering the intended owner, an operator can grant the matching membership by organization UUID, for example:
+
+```sql
+INSERT INTO organization_memberships (user_id, organization_id, role)
+SELECT id, 'replace-with-organization-uuid'::uuid, 'owner'
+FROM users
+WHERE email = 'owner@example.com'
+ON CONFLICT DO NOTHING;
+```
+
+Only assign an existing organization to the account authorized to access its data.

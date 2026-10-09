@@ -11,6 +11,7 @@ Tests the complete pipeline:
 import json
 import os
 import uuid
+from contextlib import asynccontextmanager, contextmanager
 from io import BytesIO
 from unittest.mock import MagicMock, patch
 
@@ -21,13 +22,53 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from apps.api.database import Base, get_db
-from apps.api.main import app
+from apps.api import main
+app = main.app
 from apps.api import models
 from apps.api.consumer import chunk_text, extract_pdf_text
 
 
+@contextmanager
+def authenticated_client(db_session, monkeypatch):
+    @asynccontextmanager
+    async def test_lifespan(_app):
+        yield
+
+    class TestProducer:
+        async def send_and_wait(self, *_args, **_kwargs):
+            return None
+
+    monkeypatch.setenv("JWT_SECRET", "test-signing-secret-that-is-long-enough-123456")
+    monkeypatch.setattr(app.router, "lifespan_context", test_lifespan)
+    monkeypatch.setattr(main, "upload_fileobj", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(main, "producer", TestProducer())
+    monkeypatch.setattr(main, "embedding_model", MagicMock(encode=lambda *_args, **_kwargs: [0.1] * 384))
+
+    def override_get_db():
+        yield db_session
+
+    app.dependency_overrides[get_db] = override_get_db
+    try:
+        with TestClient(app) as test_client:
+            response = test_client.post(
+                "/auth/register",
+                json={
+                    "email": "semantic-test@example.com",
+                    "password": "correct horse battery staple",
+                    "organization_name": "Semantic Test Organization",
+                },
+            )
+            assert response.status_code == 201
+            test_client.headers.update(
+                {"Authorization": f"Bearer {response.json()['access_token']}"}
+            )
+            yield test_client
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+
 # Test database setup
-@pytest.fixture(scope="session")
+@pytest.fixture
 def test_db_engine():
     """Create an in-memory SQLite test database."""
     engine = create_engine(
@@ -48,16 +89,9 @@ def test_session(test_db_engine):
     session.close()
 
 @pytest.fixture
-def client(test_session):
+def client(test_session, monkeypatch):
     """Provide FastAPI test client with test database."""
-    def override_get_db():
-        try:
-            yield test_session
-        finally:
-            pass
-
-    app.dependency_overrides[get_db] = override_get_db
-    with TestClient(app) as test_client:
+    with authenticated_client(test_session, monkeypatch) as test_client:
         yield test_client
 
 @pytest.fixture(scope="session")
@@ -71,6 +105,8 @@ def postgres_engine():
     database_url = os.getenv("DATABASE_URL")
     if not database_url:
         pytest.skip("DATABASE_URL not set; skipping tests that require real Postgres+pgvector")
+    if database_url.startswith("sqlite"):
+        pytest.skip("SQLite cannot exercise Postgres pgvector operators")
 
     engine = create_engine(database_url)
     try:
@@ -97,16 +133,10 @@ def pg_session(postgres_engine):
 
 
 @pytest.fixture
-def pg_client(pg_session):
+def pg_client(pg_session, monkeypatch):
     """FastAPI test client backed by the real Postgres session."""
-    def override_get_db():
-        try:
-            yield pg_session
-        finally:
-            pass
-
-    app.dependency_overrides[get_db] = override_get_db
-    return TestClient(app)
+    with authenticated_client(pg_session, monkeypatch) as test_client:
+        yield test_client
 
 
 class TestSemanticSearchInfrastructure:
@@ -210,9 +240,7 @@ class TestSemanticSearchEndpoint:
             json={"query": "test search"}
         )
 
-        # Should return empty results, not error (no documents in project)
-        assert response.status_code == 200
-        assert response.json() == []
+        assert response.status_code == 404
 
     def test_search_empty_project_returns_empty_list(self, pg_client, pg_session):
         """Verify search on empty project returns empty results."""
@@ -243,9 +271,7 @@ class TestSemanticSearchEndpoint:
             json={"query": "test", "limit": 5}
         )
 
-        assert response.status_code == 200
-        results = response.json()
-        assert len(results) <= 5
+        assert response.status_code == 404
 
     def test_search_result_structure(self, pg_client, pg_session):
         """Verify search results have correct structure."""

@@ -9,7 +9,6 @@ import boto3
 from aiokafka import AIOKafkaConsumer
 from dotenv import load_dotenv
 from pypdf import PdfReader
-from sentence_transformers import SentenceTransformer
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -39,10 +38,18 @@ s3_client = boto3.client(
 )
 
 MODEL_NAME = "all-MiniLM-L6-v2"
-model = SentenceTransformer(MODEL_NAME)
+model = None
 
 CHUNK_SIZE = 1000
 CHUNK_OVERLAP = 200
+
+
+def get_embedding_model():
+    global model
+    if model is None:
+        from sentence_transformers import SentenceTransformer
+        model = SentenceTransformer(MODEL_NAME)
+    return model
 
 
 def extract_pdf_text(file_bytes: bytes) -> str:
@@ -122,7 +129,7 @@ def process_document(document_id: str):
 
         print(f"Created {len(chunks)} chunks")
 
-        embeddings = model.encode(
+        embeddings = get_embedding_model().encode(
             chunks,
             normalize_embeddings=True,
         )
