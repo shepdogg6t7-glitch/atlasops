@@ -1,5 +1,7 @@
 # AtlasOps - Professional Portfolio Document
 
+**Note:** The API examples below reflect the Milestone 1 API, before AtlasOps's own authentication system was added in PR #3. The `/organizations` and `/projects` endpoints now require an `Authorization: Bearer <token>` header. Register with `POST /auth/register` or sign in with `POST /auth/login` to receive an AtlasOps-issued bearer token, valid for 30 minutes, and pass the returned `access_token`.
+
 **Project Status:** Milestone 2 Complete & In Review (PR #1)  
 **Last Updated:** 2026-09-22  
 **Repository:** [shepdogg6t7-glitch/atlasops](https://github.com/shepdogg6t7-glitch/atlasops)
