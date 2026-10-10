@@ -15,6 +15,7 @@ from contextlib import asynccontextmanager, contextmanager
 from io import BytesIO
 from unittest.mock import MagicMock, patch
 
+import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
@@ -42,7 +43,7 @@ def authenticated_client(db_session, monkeypatch):
     monkeypatch.setattr(app.router, "lifespan_context", test_lifespan)
     monkeypatch.setattr(main, "upload_fileobj", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(main, "producer", TestProducer())
-    monkeypatch.setattr(main, "embedding_model", MagicMock(encode=lambda *_args, **_kwargs: [0.1] * 384))
+    monkeypatch.setattr(main, "embedding_model", MagicMock(encode=lambda *_args, **_kwargs: np.array([0.1] * 384)))
 
     def override_get_db():
         yield db_session
