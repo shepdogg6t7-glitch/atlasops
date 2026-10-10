@@ -1,5 +1,7 @@
 # Milestone 1: Document Ingestion Pipeline
 
+**Note:** The API examples below reflect the Milestone 1 API, before authentication was added in PR #3. The `/organizations` and `/projects` endpoints now require an `Authorization: Bearer <token>` header. Create an account with `POST /auth/register` or sign in with `POST /auth/login`, then pass the returned `access_token`.
+
 **Status:** ✅ Production Ready & Complete  
 **Last Updated:** 2026-09-22  
 **Completion Date:** Implemented before Milestone 2  
