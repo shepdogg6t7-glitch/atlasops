@@ -19,13 +19,14 @@ docker compose exec postgres psql -U $POSTGRES_USER -d $POSTGRES_DB -f /dev/stdi
 ```
 
 ### Option 3: Automatic (via SQLAlchemy)
-The Python API automatically creates/updates tables on startup via `Base.metadata.create_all()`. 
-However, the SQL migration script is recommended to ensure proper indexing and extension setup.
+The Python API calls SQLAlchemy's `Base.metadata.create_all()` on startup. This
+creates missing tables, but does not add columns to existing tables; apply the
+migration when upgrading an existing database.
 
 ## Migration Notes
 
-- **001_add_semantic_search.sql**: Adds pgvector support and chunks table
-  - Enables `pgvector` extension (1536-dim embeddings for OpenAI)
+- **001_add_semantic_search.sql**: Adds pgvector support and the `document_chunks` table
+  - Enables the `vector` extension for 384-dimensional `all-MiniLM-L6-v2` embeddings
   - Adds `is_indexed` and `indexed_at` tracking to documents
-  - Creates `chunks` table with IVFFlat index for fast similarity search
+  - Creates `document_chunks` with a `content` column and IVFFlat index for cosine similarity search
   - Backward compatible: uses `IF NOT EXISTS` clauses

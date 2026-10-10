@@ -110,7 +110,7 @@ Response:
     "filename": "document.pdf",
     "chunk_index": 0,
     "text": "This chunk contains text about machine learning...",
-    "similarity_score": 0.87  # 0-1, higher is more similar
+    "similarity_score": 0.87
   },
   ...
 ]
@@ -123,7 +123,8 @@ Response:
 **Response:**
 - Array of chunks sorted by similarity score (highest first)
 - Each result includes chunk content + document context + similarity score
-- Returns empty array if no indexed chunks or project not found
+- Returns an empty array if no embedded chunks match; an unknown project ID is
+  not a 404
 - Note: the `text` field in the response is the chunk's `content` column,
   renamed at the API layer for a stable external contract
 
@@ -157,7 +158,8 @@ Response:
 - Cosine distance search in pgvector (IVFFlat index), via the
   `Column.cosine_distance(...)` comparator method (not `func.cosine_distance`,
   which does not exist)
-- Convert distance to similarity score (1 - distance)
+- Calculate `similarity_score` as `1 - cosine_distance` (the API does not clamp
+  the value to a 0-1 range)
 - Return top N results
 
 ## Dependencies
@@ -221,17 +223,12 @@ The document is now:
 - Added to database with `status="uploaded"`
 - Queued for processing
 
-Wait ~30 seconds for the consumer to process...
+Wait for the consumer to process the document. The list endpoint returns
+`id`, `filename`, `size_bytes`, and `status`; it does not expose `is_indexed`,
+and there is currently no document-detail or indexing-status endpoint. Check
+`documents.is_indexed` in the database to confirm processing.
 
-### 3. Verify Indexing
-
-```bash
-curl http://localhost:8000/projects/$PROJECT/documents | jq '.[] | {filename, is_indexed}'
-```
-
-Once `is_indexed=true`, the document is searchable.
-
-### 4. Search
+### 3. Search
 
 ```bash
 curl -X POST http://localhost:8000/projects/$PROJECT/search \
@@ -239,31 +236,19 @@ curl -X POST http://localhost:8000/projects/$PROJECT/search \
   -d '{"query": "your search terms", "limit": 5}' | jq '.'
 ```
 
-## Backward Compatibility
+## Existing API behavior
 
-✅ **Fully backward compatible:**
-- Document upload unchanged (new fields have defaults)
-- List documents unchanged (excludes new fields by default)
-- Existing Kafka pipeline untouched
-- Optional: Only indexed documents are searchable
+The organization, project, document upload, document-list, and health routes
+remain present. The document-list response contains `id`, `filename`,
+`size_bytes`, and `status`; it does not include the indexing metadata.
 
 ## Performance Considerations
 
-### Search Performance
-- IVFFlat index: O(log n) with 100 lists
-- Typical query: ~50ms for embedding + ~10ms for search
-- Total: ~60ms per query
+### Index and storage notes
 
-### Indexing Performance
-- PDF extraction: ~1-2s per page
-- Embedding generation: ~100ms per chunk
-- Database insert: ~1ms per chunk
-- Bottleneck: PDF extraction for large documents
-
-### Storage
-- 384-dim float32 embedding: ~1.5KB per chunk
-- Typical chunk: ~1KB text + 1.5KB embedding = ~2.5KB
-- 1000-page PDF ≈ 300-500 chunks ≈ 0.75-1.25MB storage
+The migration creates an IVFFlat index for cosine-distance searches. Query
+latency, indexing throughput, and storage use depend on the database, corpus,
+and runtime environment; this documentation does not assert benchmarks.
 
 ## Future Enhancements
 
@@ -318,9 +303,9 @@ curl -X POST http://localhost:8000/projects/$PROJECT/search \
 - `apps/api/requirements.txt` - Added pgvector, pytest, pytest-asyncio
 - `compose.yaml` - Already uses pgvector/pgvector:pg16 image
 
-## Post-Review Fixes
+## Historical Post-Review Notes
 
-A code review before merge found that this milestone's initial implementation
+A code review before merge reported that this milestone's initial implementation
 had a schema conflict with the `document_chunks` table already created and
 verified in Checkpoint 4: the original migration created a differently-named,
 differently-shaped `chunks` table (`text` column, `vector(1536)`) that was
@@ -345,16 +330,16 @@ The following were corrected prior to merge:
   `lifespan` (leaving the Kafka producer uninitialized during tests), and a
   `KeyError`-prone assertion that couldn't safely short-circuit
 
-All 13 tests now pass against a real Postgres+pgvector database, with the
-full pipeline (upload → chunk → embed → store → query → similarity results)
-verified end-to-end for the first time.
+The review also recorded that 13 tests passed against Postgres+pgvector at that
+time. This is historical reporting, not a current test result or a claim that
+the complete ingestion worker pipeline was exercised. The tests in the current
+tree include SQLite-backed cases and Postgres-backed vector-search cases; four
+Postgres-backed tests skip when `DATABASE_URL` is unset or the database cannot
+be reached.
 
-## Status
-
-✅ Infrastructure complete and tested
-✅ End-to-end pipeline verified against real Postgres+pgvector
-✅ Backward compatible with existing features
-✅ Ready for production use (within the scope of a local dev stack)
+This milestone describes implemented semantic-search functionality. It is not
+a production-readiness assessment; no production deployment validation is
+documented here.
 
 ---
 
@@ -364,5 +349,6 @@ verified end-to-end for the first time.
 - ✅ Semantic search endpoint with cosine similarity
 - ✅ Text extraction and embedding generation
 - ✅ Database migration and indexes
-- ✅ Comprehensive test coverage (13/13 passing against real Postgres+pgvector)
+- Test suite: 13 test functions are present; run them in the target environment
+  to establish current results
 - ✅ Documentation
