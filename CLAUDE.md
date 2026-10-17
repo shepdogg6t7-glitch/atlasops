@@ -34,7 +34,6 @@ Document-indexing and "ask" app. Upload a document, index it, ask questions, get
 - Keep changes small and explain what you changed in plain English.
 
 ## Open work
-- Auth is built in a separate worktree and is not yet committed or pushed
+- Auth is merged on main and CI runs backend tests on every PR
 - Still to do before going public: rate limiting, a spending cap, and a host for the FastAPI API and consumer (Vercel covers only the frontend)
-- `npm audit` showed 8 vulnerabilities (7 high, 1 critical) that still need review
-- `npm run lint` fails on 2 `no-explicit-any` errors in `apps/web/app/page.tsx` (present on main)
+- `npm audit` in `apps/web` shows 5 high findings, all one dev-only chain under `eslint-config-next`. Do not run `npm audit fix --force` (it installs an older, breaking version).
