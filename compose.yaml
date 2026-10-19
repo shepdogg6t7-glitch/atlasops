@@ -36,7 +36,7 @@ services:
       - minio-data:/data
 
   redpanda:
-    image: docker.redpanda.com/redpandadata/redpanda:latest
+    image: docker.redpanda.com/redpandadata/redpanda@sha256:badca2d958f81da675c3055a9ecb6ebb590325582bcf16936148ffd65e96e920
     container_name: atlasops-redpanda
     restart: unless-stopped
     command:
