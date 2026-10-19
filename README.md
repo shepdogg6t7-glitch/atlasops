@@ -78,6 +78,16 @@ setting is unset. For a new deployment, temporarily enable registration to creat
 account, then disable it and restart the API. Registration is a public on/off switch, not an
 invite-code system.
 
+### Deploy the interactive demo on Vercel
+
+Import this GitHub repository in Vercel and set the project **Root Directory** to `apps/web`;
+Vercel will detect Next.js and use the existing build settings. The deployed page opens in demo
+mode and searches bundled sample passages without an account or backend. Live sign-in and PDF
+uploads require a publicly reachable AtlasOps API: set `NEXT_PUBLIC_API_BASE_URL` in the Vercel
+project environment variables and configure that API's `CORS_ORIGIN` for the deployed Vercel
+domain. Do not point a public deployment at `localhost`; that address refers to each visitor's
+own device.
+
 Uploads must be PDFs and are limited to 25 MB by default (`MAX_UPLOAD_MB`). Since the API checks
 the file after multipart parsing, also configure a request-body limit on any reverse proxy.
 Rate limits are enabled by default; the in-memory counter is per API process. Set
