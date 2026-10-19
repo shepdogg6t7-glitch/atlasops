@@ -21,6 +21,7 @@ async def app_lifespan(_app):
 @pytest.fixture
 def client(monkeypatch):
     monkeypatch.setenv("JWT_SECRET", "test-signing-secret-that-is-long-enough-123456")
+    monkeypatch.setenv("ALLOW_REGISTRATION", "true")
     engine = create_engine(
         "sqlite:///:memory:",
         connect_args={"check_same_thread": False},
@@ -132,6 +133,31 @@ def test_login_rejects_wrong_credentials_and_registration_conflicts(client):
 def test_protected_route_rejects_invalid_token(client):
     response = client.get("/organizations", headers=bearer("not-a-valid-token"))
     assert response.status_code == 401
+
+
+def test_registration_can_be_disabled(client, monkeypatch):
+    monkeypatch.setenv("ALLOW_REGISTRATION", "false")
+    response = client.post(
+        "/auth/register",
+        json={
+            "email": "closed@example.com",
+            "password": "correct horse battery staple",
+            "organization_name": "Closed organization",
+        },
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Registration is disabled"
+
+    invalid_email = client.post(
+        "/auth/register",
+        json={
+            "email": "not-an-email",
+            "password": "correct horse battery staple",
+            "organization_name": "Closed organization",
+        },
+    )
+    assert invalid_email.status_code == 403
+    assert invalid_email.json()["detail"] == "Registration is disabled"
 
 
 def test_authentication_requires_configured_signing_secret(client, monkeypatch):

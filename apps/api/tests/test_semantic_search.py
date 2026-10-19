@@ -40,6 +40,7 @@ def authenticated_client(db_session, monkeypatch):
             return None
 
     monkeypatch.setenv("JWT_SECRET", "test-signing-secret-that-is-long-enough-123456")
+    monkeypatch.setenv("ALLOW_REGISTRATION", "true")
     monkeypatch.setattr(app.router, "lifespan_context", test_lifespan)
     monkeypatch.setattr(main, "upload_fileobj", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(main, "producer", TestProducer())

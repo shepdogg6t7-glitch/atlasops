@@ -72,6 +72,11 @@ npm run dev
 ```
 
 Open http://localhost:3000 to register/sign in, create a project, and upload documents.
+Registration is enabled for local development by `.env.example`; set `ALLOW_REGISTRATION=false`
+in `.env` to disable new account creation. The API defaults to denying registration when the
+setting is unset. For a new deployment, temporarily enable registration to create the first
+account, then disable it and restart the API. Registration is a public on/off switch, not an
+invite-code system.
 
 Uploads must be PDFs and are limited to 25 MB by default (`MAX_UPLOAD_MB`). Since the API checks
 the file after multipart parsing, also configure a request-body limit on any reverse proxy.

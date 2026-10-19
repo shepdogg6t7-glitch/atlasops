@@ -153,6 +153,13 @@ def _create_user_organization(email: str, password: str, organization_name: str,
 @app.post("/auth/register", status_code=status.HTTP_201_CREATED)
 @limiter.limit(limit_register)
 def register(request: Request, payload: RegisterRequest, db: Session = Depends(get_db)):
+    if os.getenv("ALLOW_REGISTRATION", "false").strip().lower() not in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }:
+        raise HTTPException(status_code=403, detail="Registration is disabled")
     get_signing_secret()
     email = normalize_email(payload.email)
     organization_name = payload.organization_name.strip()
