@@ -54,7 +54,7 @@ Backing services run in Docker; the API runs locally against them.
 git clone https://github.com/shepdogg6t7-glitch/atlasops.git
 cd atlasops
 cp .env.example .env             # edit values if needed
-docker compose up -d             # Postgres, Redis, MinIO, Redpanda
+docker compose up -d             # Postgres, Redis, MinIO, Redpanda (ports bound to localhost)
 python -m venv .venv && source .venv/bin/activate
 pip install -r apps/api/requirements.txt
 uvicorn apps.api.main:app --reload
@@ -72,6 +72,19 @@ npm run dev
 ```
 
 Open http://localhost:3000 to register/sign in, create a project, and upload documents.
+Registration is enabled for local development by `.env.example`; set `ALLOW_REGISTRATION=false`
+in `.env` to disable new account creation. The API defaults to denying registration when the
+setting is unset. For a new deployment, temporarily enable registration to create the first
+account, then disable it and restart the API. Registration is a public on/off switch, not an
+invite-code system.
+
+Uploads must be PDFs and are limited to 25 MB by default (`MAX_UPLOAD_MB`). Since the API checks
+the file after multipart parsing, also configure a request-body limit on any reverse proxy.
+Rate limits are enabled by default; the in-memory counter is per API process. Set
+`RATE_LIMIT_STORAGE_URI` to a shared Redis URL when running multiple workers (for the local
+quickstart, `redis://localhost:6379/0`). Rate limiting fails closed: if Redis is unavailable,
+limited requests receive `503` until it recovers. Configure Uvicorn's proxy headers with only
+your trusted proxy addresses when deployed behind a proxy.
 
 ## API Endpoints
 

@@ -11,5 +11,7 @@ sentence-transformers==6.1.0
 pgvector==0.2.0
 argon2-cffi==25.1.0
 PyJWT==2.10.1
+redis==5.2.1
 pytest==7.4.3
 pytest-asyncio==0.21.1
+slowapi==0.1.10

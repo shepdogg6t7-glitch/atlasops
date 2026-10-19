@@ -2,12 +2,15 @@ import os
 import uuid
 import json
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, status
+from fastapi import FastAPI, Depends, HTTPException, Request, UploadFile, File, status
 from fastapi.middleware.cors import CORSMiddleware
+from limits.errors import StorageError
 from pydantic import BaseModel, Field
+from redis.exceptions import RedisError
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from aiokafka import AIOKafkaProducer
+from slowapi.errors import RateLimitExceeded
 
 from apps.api.database import engine, get_db, Base
 from apps.api import models
@@ -20,6 +23,16 @@ from apps.api.auth import (
     normalize_email,
     verify_password,
 )
+from apps.api.ratelimit import (
+    limit_login,
+    limit_register,
+    limit_search,
+    limit_upload,
+    limiter,
+    rate_limit_exceeded_handler,
+    rate_limit_storage_error_handler,
+)
+from apps.api.uploads import reject_oversized_request, sanitize_filename, validate_pdf_upload
 
 REDPANDA_BOOTSTRAP = os.getenv("REDPANDA_BOOTSTRAP", "localhost:19092")
 
@@ -42,6 +55,10 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="AtlasOps API", lifespan=lifespan)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
+app.add_exception_handler(RedisError, rate_limit_storage_error_handler)
+app.add_exception_handler(StorageError, rate_limit_storage_error_handler)
 
 cors_origin = os.getenv("CORS_ORIGIN", "http://localhost:3000")
 app.add_middleware(
@@ -134,7 +151,15 @@ def _create_user_organization(email: str, password: str, organization_name: str,
 
 
 @app.post("/auth/register", status_code=status.HTTP_201_CREATED)
-def register(payload: RegisterRequest, db: Session = Depends(get_db)):
+@limiter.limit(limit_register)
+def register(request: Request, payload: RegisterRequest, db: Session = Depends(get_db)):
+    if os.getenv("ALLOW_REGISTRATION", "false").strip().lower() not in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }:
+        raise HTTPException(status_code=403, detail="Registration is disabled")
     get_signing_secret()
     email = normalize_email(payload.email)
     organization_name = payload.organization_name.strip()
@@ -161,7 +186,8 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)):
 
 
 @app.post("/auth/login")
-def login(payload: LoginRequest, db: Session = Depends(get_db)):
+@limiter.limit(limit_login)
+def login(request: Request, payload: LoginRequest, db: Session = Depends(get_db)):
     get_signing_secret()
     email = normalize_email(payload.email)
     user = db.query(models.User).filter(models.User.email == email).first()
@@ -251,7 +277,9 @@ def create_project(
 
 
 @app.post("/projects/{project_id}/documents")
+@limiter.limit(limit_upload)
 async def upload_document(
+    request: Request,
     project_id: uuid.UUID,
     file: UploadFile = File(...),
     user: models.User = Depends(get_current_user),
@@ -261,16 +289,16 @@ async def upload_document(
     if producer is None:
         raise HTTPException(status_code=503, detail="Document event service is unavailable")
 
-    file.file.seek(0, 2)
-    size_bytes = file.file.tell()
-    file.file.seek(0)
+    reject_oversized_request(request.headers.get("content-length"))
+    size_bytes = validate_pdf_upload(file)
+    filename = sanitize_filename(file.filename)
 
-    storage_key = f"{project_id}/{uuid.uuid4()}-{file.filename}"
-    upload_fileobj(file.file, storage_key, file.content_type or "application/octet-stream")
+    storage_key = f"{project_id}/{uuid.uuid4()}-{filename}"
+    upload_fileobj(file.file, storage_key, "application/pdf")
 
     doc = models.Document(
-        filename=file.filename,
-        content_type=file.content_type or "application/octet-stream",
+        filename=filename,
+        content_type="application/pdf",
         size_bytes=size_bytes,
         storage_key=storage_key,
         project_id=project_id,
@@ -306,7 +334,9 @@ def list_documents(
 
 
 @app.post("/projects/{project_id}/search")
+@limiter.limit(limit_search)
 def semantic_search(
+    request: Request,
     project_id: uuid.UUID,
     payload: SemanticSearchQuery,
     user: models.User = Depends(get_current_user),
