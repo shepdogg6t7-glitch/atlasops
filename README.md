@@ -6,6 +6,13 @@ Open-source, self-hostable AI document intelligence platform. Upload a document 
 
 [Try the live demo](https://atlasops-psi.vercel.app).
 
+<table>
+  <tr>
+    <td><img src="docs/demo-desktop.png" alt="AtlasOps demo results on desktop" width="600"></td>
+    <td><img src="docs/demo-mobile.jpg" alt="AtlasOps demo on mobile" width="220"></td>
+  </tr>
+</table>
+
 The Vercel demo runs without a backend: try the interactive search over bundled sample passages.
 It does not upload documents or call an AI service. The full application stack is built with
 FastAPI, Redpanda, Postgres/pgvector, Next.js, and Gemini for the planned AI question-answering
