@@ -2,6 +2,19 @@
 
 Open-source, self-hostable AI document intelligence platform. Upload a document corpus, index it with semantic embeddings, and query it in natural language — all running on your own infrastructure, with no data leaving your network.
 
+## Live Demo
+
+[Try the live demo](https://atlasops-psi.vercel.app).
+
+The Vercel demo runs without a backend: try the interactive search over bundled sample passages.
+It does not upload documents or call an AI service. The full application stack is built with
+FastAPI, Redpanda, Postgres/pgvector, Next.js, and Gemini for the planned AI question-answering
+flow.
+
+The backend includes authentication, rate limits, PDF and upload-size validation, and
+loopback-only Compose port bindings. These safeguards are part of the self-hosted backend; they
+are not exercised by the frontend-only demo.
+
 ## What It Does
 
 - Ingests PDFs into per-project corpora, stored in S3-compatible object storage
