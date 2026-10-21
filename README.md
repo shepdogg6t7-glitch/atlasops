@@ -153,10 +153,10 @@ Test configuration is in `pytest.ini` (asyncio auto mode, tests under `apps/api/
 
 ## Documentation
 
-- [`docs/adr/`](docs/adr/) — architecture decision records
-- [`docs/architecture/`](docs/architecture/) — system architecture notes
-- [`docs/operations/`](docs/operations/) — operational runbooks
-- [`docs/security/`](docs/security/) — security posture and threat model
+- [`docs/adr/`](docs/adr/) — architecture decision records (ADR-001 pgvector, ADR-002 loopback-only deployment, ADR-003 event-driven ingestion)
+- [`docs/architecture/`](docs/architecture/) — system architecture, data flow, and deployment topology (Mermaid diagrams)
+- [`docs/operations/`](docs/operations/) — operational runbooks (deploy, migrate, rate-limit outage, backup/restore)
+- [`docs/security/`](docs/security/) — security posture, threat model, and focused NIST SP 800-53 Rev 5 control mapping
 - [`MILESTONE_2.md`](MILESTONE_2.md) — full Milestone 2 design and implementation
 - [`examples/`](examples/) — sample documents and evaluation dataset
 
