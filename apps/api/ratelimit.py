@@ -34,6 +34,10 @@ def limit_search() -> str:
     return _env_limit("RATE_LIMIT_SEARCH", "30/minute")
 
 
+def limit_ask() -> str:
+    return _env_limit("RATE_LIMIT_ASK", "20/minute")
+
+
 def rate_limit_key(request: Request) -> str:
     """Use the authenticated user ID when possible, otherwise the client IP."""
     scheme, _, token = request.headers.get("authorization", "").partition(" ")

@@ -24,6 +24,7 @@ from apps.api.auth import (
     verify_password,
 )
 from apps.api.ratelimit import (
+    limit_ask,
     limit_login,
     limit_register,
     limit_search,
@@ -33,25 +34,29 @@ from apps.api.ratelimit import (
     rate_limit_storage_error_handler,
 )
 from apps.api.uploads import reject_oversized_request, sanitize_filename, validate_pdf_upload
+from apps.api.llm import LLMService
 
 REDPANDA_BOOTSTRAP = os.getenv("REDPANDA_BOOTSTRAP", "localhost:19092")
 
 producer: AIOKafkaProducer | None = None
 embedding_model = None
+llm_service: LLMService | None = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global producer
+    global producer, llm_service
     get_signing_secret()
     Base.metadata.create_all(bind=engine)
     ensure_bucket()
     producer = AIOKafkaProducer(bootstrap_servers=REDPANDA_BOOTSTRAP)
     await producer.start()
+    llm_service = LLMService()
     try:
         yield
     finally:
         await producer.stop()
+        await llm_service.aclose()
 
 
 app = FastAPI(title="AtlasOps API", lifespan=lifespan)
@@ -86,6 +91,11 @@ class ProjectCreate(BaseModel):
 class SemanticSearchQuery(BaseModel):
     query: str = Field(min_length=1, max_length=4000)
     limit: int = Field(default=10, ge=1, le=50)
+
+
+class AskQuery(BaseModel):
+    question: str = Field(min_length=1, max_length=4000)
+    limit: int = Field(default=5, ge=1, le=20)
 
 
 class RegisterRequest(BaseModel):
@@ -380,3 +390,74 @@ def semantic_search(
         }
         for c in chunks
     ]
+
+
+@app.post("/projects/{project_id}/ask")
+@limiter.limit(limit_ask)
+def ask_question(
+    request: Request,
+    project_id: uuid.UUID,
+    payload: AskQuery,
+    user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _require_project_membership(project_id, user, db)
+    global embedding_model
+    if llm_service is None:
+        raise HTTPException(status_code=503, detail="LLM service is unavailable")
+    if embedding_model is None:
+        from sentence_transformers import SentenceTransformer
+        embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
+
+    # Retrieve relevant chunks via semantic search
+    query_embedding = embedding_model.encode(payload.question).tolist()
+
+    chunks = (
+        db.query(
+            models.Chunk.id,
+            models.Chunk.content,
+            models.Chunk.chunk_index,
+            models.Document.id.label("document_id"),
+            models.Document.filename,
+            models.Chunk.embedding.cosine_distance(query_embedding).label("distance")
+        )
+        .join(models.Document, models.Chunk.document_id == models.Document.id)
+        .filter(models.Document.project_id == project_id)
+        .filter(models.Chunk.embedding.isnot(None))
+        .order_by("distance")
+        .limit(payload.limit)
+        .all()
+    )
+
+    if not chunks:
+        return {"answer": "No relevant document content found to answer the question.", "sources": []}
+
+    chunk_list = [
+        {
+            "chunk_id": str(c.id),
+            "document_id": str(c.document_id),
+            "filename": c.filename,
+            "chunk_index": c.chunk_index,
+            "text": c.content,
+            "similarity_score": 1 - c.distance,
+        }
+        for c in chunks
+    ]
+
+    import asyncio
+
+    answer = asyncio.run(llm_service.generate_answer(payload.question, chunk_list))
+
+    return {
+        "answer": answer,
+        "sources": [
+            {
+                "chunk_id": c["chunk_id"],
+                "document_id": c["document_id"],
+                "filename": c["filename"],
+                "chunk_index": c["chunk_index"],
+                "similarity_score": c["similarity_score"],
+            }
+            for c in chunk_list
+        ],
+    }
