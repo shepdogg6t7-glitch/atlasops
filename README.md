@@ -163,3 +163,36 @@ Test configuration is in `pytest.ini` (asyncio auto mode, tests under `apps/api/
 ## License
 
 Apache 2.0 — see [LICENSE](LICENSE).
+
+## Security controls
+
+Upload request path, traced from `apps/api/main.py`, `ratelimit.py`, and `uploads.py`:
+
+```mermaid
+flowchart TD
+  REQ["POST /projects/:id/documents"] --> AUTH["Authenticate user"]
+  AUTH -->|"Invalid or missing token"| R0["Reject"]
+  AUTH --> RL{"Rate limit: upload, keyed by user ID"}
+  RL -->|"Limit exceeded"| E429["429 Too Many Requests"]
+  RL -->|"Redis error, fail closed"| E503A["503 Service Unavailable"]
+  RL -->|Allowed| MEM{"Project member?"}
+  MEM -->|No| R1["Reject"]
+  MEM -->|Yes| EVT{"Event producer available?"}
+  EVT -->|No| E503B["503 Event service unavailable"]
+  EVT -->|Yes| CL{"Declared Content-Length"}
+  CL -->|Invalid| E400A["400 Invalid Content-Length"]
+  CL -->|"Over limit plus 64 KB overhead"| E413A["413 File too large"]
+  CL -->|OK| FILE{"Actual file bytes"}
+  FILE -->|Empty| E400B["400 Empty file"]
+  FILE -->|"Over size limit"| E413B["413 File too large"]
+  FILE -->|"PDF signature missing"| E415["415 Only PDF accepted"]
+  FILE -->|Valid| FN["Sanitize filename, max 200 chars"]
+  FN --> ST["Store in MinIO: project_id/uuid-filename"]
+  ST --> DB["Save record, status uploaded"]
+  DB --> Q["Publish document.uploaded to Redpanda"]
+```
+
+- **Rate limits:** registration, login, upload, and search each have a separate limit. The key is the user ID from a valid token, otherwise the client IP. Over the limit returns 429. If Redis or the limiter's storage fails, the request returns 503 and does not go through.
+- **Upload validation:** the declared Content-Length is checked first to reject early. The received file's real size, emptiness, and PDF signature are then checked. The default limit is 25 MB, set with `MAX_UPLOAD_MB`.
+- **Storage:** files are stored under a random UUID, and filenames are sanitized and capped at 200 characters.
+- **Known limits:** the PDF signature check filters file type and does not scan for malware. Requests with no Content-Length are size-checked only after the body is received.
