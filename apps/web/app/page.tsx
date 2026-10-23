@@ -1,11 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 
 const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE_URL ||
   (process.env.NODE_ENV === "development" ? "http://localhost:8000" : null);
+
+const TOKEN_KEY = "atlasops_access_token";
 
 const SAMPLE_QUESTIONS = [
   "What happens when a critical incident is reported?",
@@ -51,11 +53,20 @@ type AuthResponse = {
   access_token: string;
   organizations: Organization[];
 };
-type UploadedDocument = {
+type DocumentRecord = {
   id: string;
   filename: string;
   size_bytes: number;
   status: string;
+  is_indexed: boolean;
+};
+type SearchResult = {
+  chunk_id: string;
+  document_id: string;
+  filename: string;
+  chunk_index: number;
+  text: string;
+  similarity_score: number;
 };
 
 function findSamplePassages(query: string): DemoPassage[] {
@@ -75,24 +86,75 @@ function findSamplePassages(query: string): DemoPassage[] {
     .slice(0, 3);
 }
 
+function statusLabel(document: DocumentRecord): string {
+  if (document.status === "indexed" || document.is_indexed) return "Indexed";
+  if (document.status === "uploaded") return "Indexing";
+  if (document.status === "error") return "Error";
+  return document.status;
+}
+
+function statusColor(status: string, isIndexed: boolean): string {
+  if (status === "indexed" || isIndexed) return "text-emerald-700 bg-emerald-50 border-emerald-100";
+  if (status === "error") return "text-red-700 bg-red-50 border-red-100";
+  return "text-blue-700 bg-blue-50 border-blue-100";
+}
+
 export default function Home() {
   const [view, setView] = useState<"home" | "demo" | "auth">("home");
   const [registering, setRegistering] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [organizationName, setOrganizationName] = useState("");
-  const [token, setToken] = useState<string | null>(null);
+  const [token, setToken] = useState<string | null>(() => {
+  if (typeof window === "undefined") return null;
+  return localStorage.getItem(TOKEN_KEY);
+});
   const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [organizationId, setOrganizationId] = useState("");
   const [projects, setProjects] = useState<Project[]>([]);
   const [projectId, setProjectId] = useState("");
   const [projectName, setProjectName] = useState("");
   const [file, setFile] = useState<File | null>(null);
-  const [uploadResult, setUploadResult] = useState<UploadedDocument | null>(null);
+  const [fileInputKey, setFileInputKey] = useState(0);
+  const [uploadResult, setUploadResult] = useState<DocumentRecord | null>(null);
+  const [documents, setDocuments] = useState<DocumentRecord[]>([]);
+  const [documentsLoading, setDocumentsLoading] = useState(false);
   const [query, setQuery] = useState(SAMPLE_QUESTIONS[0]);
   const [demoResults, setDemoResults] = useState<DemoPassage[] | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<SearchResult[] | null>(null);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    if (!token || organizationId) return;
+    (async () => {
+      try {
+        const response = await fetch(`${API_BASE}/organizations`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!response.ok) throw new Error("Could not load organizations.");
+        const list = (await response.json()) as Organization[];
+        setOrganizations(list);
+        if (list[0]) {
+          setOrganizationId(list[0].id);
+          await loadProjects(list[0].id, token);
+        }
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Could not load organizations.");
+      }
+    })();
+  }, [token, organizationId]);
+
+  const stopPolling = () => {
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+  };
 
   async function loadProjects(orgId: string, accessToken: string) {
     if (!API_BASE) throw new Error("Live API is not configured for this deployment.");
@@ -102,8 +164,36 @@ export default function Home() {
     if (!response.ok) throw new Error(await response.text());
     const projectList = (await response.json()) as Project[];
     setProjects(projectList);
-    setProjectId(projectList[0]?.id ?? "");
+    if (!projectId || !projectList.find((project) => project.id === projectId)) {
+      setProjectId(projectList[0]?.id ?? "");
+    }
   }
+
+  async function loadDocuments() {
+    if (!token || !projectId || !API_BASE) return;
+    setDocumentsLoading(true);
+    try {
+      const response = await fetch(`${API_BASE}/projects/${projectId}/documents`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) throw new Error(await response.text());
+      setDocuments((await response.json()) as DocumentRecord[]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not load documents.");
+    } finally {
+      setDocumentsLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    const indexing = documents.some((document) => document.status === "uploaded");
+    if (indexing && projectId) {
+      timerRef.current = setInterval(loadDocuments, 2000);
+    } else {
+      stopPolling();
+    }
+    return stopPolling;
+  }, [documents, projectId]);
 
   async function handleAuth(event: FormEvent) {
     event.preventDefault();
@@ -126,9 +216,11 @@ export default function Home() {
       if (!response.ok) throw new Error(await response.text());
       const data = (await response.json()) as AuthResponse;
       setToken(data.access_token);
+      localStorage.setItem(TOKEN_KEY, data.access_token);
       setOrganizations(data.organizations);
       const firstOrganizationId = data.organizations[0]?.id ?? "";
       setOrganizationId(firstOrganizationId);
+      setView("home");
       if (firstOrganizationId) await loadProjects(firstOrganizationId, data.access_token);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Authentication failed.");
@@ -137,8 +229,30 @@ export default function Home() {
     }
   }
 
+  function logout() {
+    stopPolling();
+    setToken(null);
+    localStorage.removeItem(TOKEN_KEY);
+    setOrganizations([]);
+    setOrganizationId("");
+    setProjects([]);
+    setProjectId("");
+    setDocuments([]);
+    setProjectName("");
+    setFile(null);
+    setFileInputKey((key) => key + 1);
+    setUploadResult(null);
+    setSearchResults(null);
+    setSearchQuery("");
+    setPassword("");
+    setError(null);
+    setView("home");
+  }
+
   async function handleOrganizationChange(nextOrganizationId: string) {
     setOrganizationId(nextOrganizationId);
+    setProjectId("");
+    setDocuments([]);
     if (!token) return;
     setError(null);
     try {
@@ -193,7 +307,11 @@ export default function Home() {
         body: formData,
       });
       if (!response.ok) throw new Error(await response.text());
-      setUploadResult((await response.json()) as UploadedDocument);
+      const result = (await response.json()) as DocumentRecord;
+      setUploadResult(result);
+      setFile(null);
+      setFileInputKey((key) => key + 1);
+      await loadDocuments();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Upload failed.");
     } finally {
@@ -201,21 +319,37 @@ export default function Home() {
     }
   }
 
+  async function handleSearch(event: FormEvent) {
+    event.preventDefault();
+    setSearchError(null);
+    setSearchResults(null);
+    if (!token || !projectId || !searchQuery.trim() || !API_BASE) {
+      setSearchError("Choose a project and enter a question.");
+      return;
+    }
+
+    setSearchLoading(true);
+    try {
+      const response = await fetch(`${API_BASE}/projects/${projectId}/search`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ query: searchQuery, limit: 10 }),
+      });
+      if (!response.ok) throw new Error(await response.text());
+      setSearchResults((await response.json()) as SearchResult[]);
+    } catch (err) {
+      setSearchError(err instanceof Error ? err.message : "Search failed.");
+    } finally {
+      setSearchLoading(false);
+    }
+  }
+
   function searchDemo(event: FormEvent) {
     event.preventDefault();
     setDemoResults(findSamplePassages(query));
-  }
-
-  function logout() {
-    setToken(null);
-    setOrganizations([]);
-    setOrganizationId("");
-    setProjects([]);
-    setProjectId("");
-    setPassword("");
-    setUploadResult(null);
-    setError(null);
-    setView("home");
   }
 
   return (
@@ -254,9 +388,11 @@ export default function Home() {
               </>
             )}
             {token && (
-              <button type="button" onClick={logout} className="text-sm font-medium text-slate-600 hover:text-slate-900">
-                Sign out
-              </button>
+              <>
+                <button type="button" onClick={logout} className="text-sm font-medium text-slate-600 hover:text-slate-900">
+                  Sign out
+                </button>
+              </>
             )}
           </nav>
         </div>
@@ -534,72 +670,228 @@ export default function Home() {
       )}
 
       {token && (
-        <section className="mx-auto flex max-w-2xl flex-col gap-5 px-6 py-10">
-          <div className="rounded-2xl border border-slate-200 bg-white p-6">
-            <p className="text-xs font-semibold uppercase tracking-wider text-blue-700">Workspace</p>
-            <h1 className="mt-2 text-2xl font-semibold">Your documents</h1>
-            {organizations.length > 1 && (
-              <label className="mt-5 flex flex-col gap-1.5">
-                <span className="text-sm font-medium">Organization</span>
-                <select
-                  value={organizationId}
-                  onChange={(event) => void handleOrganizationChange(event.target.value)}
-                  className="rounded-lg border border-slate-300 px-3 py-2.5"
-                >
-                  {organizations.map((organization) => (
-                    <option key={organization.id} value={organization.id}>{organization.name}</option>
-                  ))}
-                </select>
-              </label>
-            )}
-            <form onSubmit={handleCreateProject} className="mt-5 flex gap-2">
-              <input
-                required
-                maxLength={200}
-                value={projectName}
-                onChange={(event) => setProjectName(event.target.value)}
-                placeholder="New project name"
-                className="min-w-0 flex-1 rounded-lg border border-slate-300 px-3 py-2.5"
-              />
-              <button type="submit" disabled={loading || !organizationId} className="rounded-lg border border-slate-300 px-4 py-2.5 text-sm font-semibold disabled:opacity-50">
-                Create project
-              </button>
-            </form>
-            <form onSubmit={handleUpload} className="mt-6 flex flex-col gap-4 border-t border-slate-100 pt-5">
-              <label className="flex flex-col gap-1.5">
-                <span className="text-sm font-medium">Project</span>
-                <select
-                  required
-                  value={projectId}
-                  onChange={(event) => setProjectId(event.target.value)}
-                  className="rounded-lg border border-slate-300 px-3 py-2.5"
-                >
-                  <option value="" disabled>Select a project</option>
-                  {projects.map((project) => (
-                    <option key={project.id} value={project.id}>{project.name}</option>
-                  ))}
-                </select>
-              </label>
-              <label className="flex flex-col gap-1.5">
-                <span className="text-sm font-medium">PDF document</span>
-                <input
-                  type="file"
-                  accept="application/pdf,.pdf"
-                  onChange={(event) => setFile(event.target.files?.[0] ?? null)}
-                  className="rounded-lg border border-slate-300 px-3 py-2.5 text-sm"
-                />
-              </label>
-              <button type="submit" disabled={loading || !projectId} className="rounded-lg bg-blue-700 px-4 py-2.5 font-semibold text-white hover:bg-blue-800 disabled:opacity-50">
-                {loading ? "Uploading..." : "Upload PDF"}
-              </button>
-            </form>
+        <section className="mx-auto max-w-6xl px-6 py-10">
+          <div className="flex items-center justify-between mb-8">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wider text-blue-700">Workspace</p>
+              <h1 className="mt-2 text-2xl font-semibold">Your documents</h1>
+            </div>
+            <button type="button" onClick={logout} className="text-sm font-medium text-slate-600 hover:text-slate-900">
+              Sign out
+            </button>
           </div>
-          {uploadResult && (
-            <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm">
-              <p className="font-semibold text-emerald-900">Upload {uploadResult.status}</p>
-              <p className="mt-1 text-emerald-800">{uploadResult.filename} · {uploadResult.size_bytes} bytes</p>
+
+          {error && (
+            <div role="alert" className="mb-6 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+              {error}
             </div>
           )}
+
+          <div className="grid gap-6 lg:grid-cols-[1.4fr_2.6fr]">
+            <aside className="rounded-2xl border border-slate-200 bg-white p-5">
+              <div className="flex flex-col gap-4">
+                <label className="flex flex-col gap-1.5">
+                  <span className="text-sm font-medium">Organization</span>
+                  {organizations.length > 1 ? (
+                    <select
+                      value={organizationId}
+                      onChange={(event) => void handleOrganizationChange(event.target.value)}
+                      className="rounded-lg border border-slate-300 px-3 py-2.5 text-sm"
+                    >
+                      {organizations.map((organization) => (
+                        <option key={organization.id} value={organization.id}>{organization.name}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <span className="rounded-lg border border-slate-300 bg-slate-50 px-3 py-2.5 text-sm text-slate-500">
+                      {organizations[0]?.name ?? "No organization"}
+                    </span>
+                  )}
+                </label>
+                <form onSubmit={handleCreateProject} className="flex flex-col gap-3">
+                  <label className="flex flex-col gap-1.5">
+                    <span className="text-sm font-medium">New project</span>
+                    <input
+                      required
+                      maxLength={200}
+                      value={projectName}
+                      onChange={(event) => setProjectName(event.target.value)}
+                      placeholder="Project name"
+                      className="rounded-lg border border-slate-300 px-3 py-2.5 text-sm"
+                    />
+                  </label>
+                  <button
+                    type="submit"
+                    disabled={loading || !organizationId}
+                    className="rounded-lg border border-slate-300 px-4 py-2.5 text-sm font-semibold disabled:opacity-50"
+                  >
+                    Create project
+                  </button>
+                </form>
+                {projects.length === 0 && organizationId && (
+                  <p className="mt-4 text-xs text-slate-500">No projects yet. Create one above to start uploading PDFs.</p>
+                )}
+                {projects.length > 0 && (
+                  <div className="mt-4 flex flex-col gap-2">
+                    <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Projects</p>
+                    {projects.map((project) => (
+                      <button
+                        key={project.id}
+                        type="button"
+                        onClick={() => {
+                          setProjectId(project.id);
+                          setDocuments([]);
+                        }}
+                        className={`w-full text-left rounded-lg px-3 py-2.5 text-sm border ${
+                          projectId === project.id
+                            ? "border-blue-300 bg-blue-50 text-blue-900 font-medium"
+                            : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                        }`}
+                      >
+                        {project.name}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </aside>
+
+            {!projectId ? (
+              <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center">
+                <p className="text-sm font-medium text-slate-900">Select a project, or create one.</p>
+                <p className="mt-1 text-xs text-slate-500">Projects hold your PDFs and their search index.</p>
+              </div>
+            ) : (
+              <>
+                <div className="flex items-center justify-between mb-4">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wider text-blue-700">Project · {projects.find((p) => p.id === projectId)?.name}</p>
+                    <h2 className="mt-1 text-lg font-semibold">Documents</h2>
+                  </div>
+                </div>
+
+                <form onSubmit={handleUpload} className="mb-6 flex flex-col gap-4 border border-slate-200 rounded-xl p-5 sm:p-6">
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <label className="flex flex-col gap-1.5">
+                      <span className="text-sm font-medium">PDF document</span>
+                      <input
+                        key={fileInputKey}
+                        type="file"
+                        accept="application/pdf,.pdf"
+                        onChange={(event) => setFile(event.target.files?.[0] ?? null)}
+                        className="block w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm"
+                      />
+                    </label>
+                    <div className="flex items-end">
+                      <button
+                        type="submit"
+                        disabled={loading || !file}
+                        className="rounded-lg bg-blue-700 px-4 py-2.5 font-semibold text-white hover:bg-blue-800 disabled:opacity-50"
+                      >
+                        {loading ? "Uploading…" : "Upload PDF"}
+                      </button>
+                    </div>
+                  </div>
+                  <p className="mt-1 text-xs text-slate-500">PDF files up to 25 MB. Text extraction and embedding happen in the background after upload.</p>
+                </form>
+
+                {uploadResult && (
+                  <div className="mb-6 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm">
+                    <p className="font-semibold text-emerald-900">Upload received · {statusLabel(uploadResult)}</p>
+                    <p className="mt-1 text-emerald-800">
+                      {uploadResult.filename} · {uploadResult.size_bytes} bytes
+                    </p>
+                  </div>
+                )}
+
+                <div className="rounded-xl border border-slate-200 bg-white">
+                  <div className="border-b border-slate-100 px-5 py-3">
+                    <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+                      {documents.length} document{documents.length !== 1 ? "s" : ""}
+                      {documentsLoading ? ` · ${documents.some((d) => d.status === "uploaded") ? "indexing…" : ""}` : ""}
+                    </p>
+                  </div>
+                  <div className="divide-y divide-slate-100">
+                    {documents.length === 0 ? (
+                      <div className="px-5 py-8 text-center">
+                        <p className="text-sm text-slate-500">No documents yet. Upload a PDF above.</p>
+                      </div>
+                    ) : (
+                      documents.map((document) => (
+                        <div key={document.id} className="px-5 py-3.5 flex items-center justify-between gap-3 sm:px-6">
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-medium text-slate-900 truncate">{document.filename}</p>
+                            <p className="text-xs text-slate-500">{document.size_bytes} bytes</p>
+                          </div>
+                          <span
+                            className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${statusColor(document.status, document.is_indexed)}`}
+                          >
+                            {statusLabel(document)}
+                          </span>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+
+                <form onSubmit={handleSearch} className="mt-8 flex flex-col gap-4 border border-slate-200 rounded-xl p-5 sm:p-6">
+                  <div>
+                    <label className="block text-sm font-semibold text-slate-900">Search your documents</label>
+                    <p className="mt-1 text-xs text-slate-500">Ask in plain language; results are ranked by semantic similarity.</p>
+                  </div>
+                  <div className="flex flex-col sm:flex-row gap-3">
+                    <input
+                      value={searchQuery}
+                      onChange={(event) => setSearchQuery(event.target.value)}
+                      placeholder="e.g. how are database backups retained?"
+                      className="min-w-0 flex-1 rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-blue-600"
+                    />
+                    <button
+                      type="submit"
+                      disabled={searchLoading || !searchQuery.trim()}
+                      className="rounded-xl bg-blue-700 px-5 py-3 text-sm font-semibold text-white hover:bg-blue-800 disabled:opacity-50"
+                    >
+                      {searchLoading ? "Searching…" : "Search"}
+                    </button>
+                  </div>
+                  {searchError && (
+                    <p className="text-sm text-red-700">{searchError}</p>
+                  )}
+                  {searchLoading && !searchResults && (
+                    <p className="text-sm text-slate-500">Embedding your question and ranking passages…</p>
+                  )}
+                </form>
+
+                {searchResults !== null && (
+                  <div className="mt-6 space-y-3">
+                    <h2 className="text-sm font-semibold text-slate-900">
+                      Matching passages ({searchResults.length})
+                    </h2>
+                    {searchResults.length === 0 ? (
+                      <p className="rounded-xl bg-slate-50 p-4 text-sm text-slate-600">
+                        No relevant passages found. Try rephrasing your question.
+                      </p>
+                    ) : (
+                      searchResults.map((result) => (
+                        <div key={result.chunk_id} className="rounded-xl border border-slate-200 p-4">
+                          <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                            <p className="text-sm font-semibold text-slate-900 truncate">{result.filename}</p>
+                            <span className="text-xs text-slate-500">Chunk {result.chunk_index + 1}</span>
+                            <span
+                              className="rounded-full px-2 py-0.5 text-xs font-medium text-blue-600 bg-blue-50 border border-blue-100"
+                            >
+                              {(result.similarity_score * 100).toFixed(0)}% match
+                            </span>
+                          </div>
+                          <p className="text-sm leading-6 text-slate-700">{result.text}</p>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
         </section>
       )}
 
