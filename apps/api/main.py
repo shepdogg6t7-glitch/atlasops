@@ -328,7 +328,13 @@ def list_documents(
     _require_project_membership(project_id, user, db)
     docs = db.query(models.Document).filter(models.Document.project_id == project_id).all()
     return [
-        {"id": str(d.id), "filename": d.filename, "size_bytes": d.size_bytes, "status": d.status}
+        {
+            "id": str(d.id),
+            "filename": d.filename,
+            "size_bytes": d.size_bytes,
+            "status": d.status,
+            "is_indexed": d.is_indexed,
+        }
         for d in docs
     ]
 

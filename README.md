@@ -1,165 +1,211 @@
 # AtlasOps
 
-Open-source, self-hostable AI document intelligence platform. Upload a document corpus, index it with semantic embeddings, and query it in natural language — all running on your own infrastructure, with no data leaving your network.
+Self-hosted document intelligence platform. Upload PDFs, organize them into projects and organizations, and search across your documents using natural language with semantic embeddings and ranked results.
 
-## Live Demo
+## Features
 
-[Try the live demo](https://atlasops-psi.vercel.app).
-
-<table>
-  <tr>
-    <td><img src="docs/demo-desktop.png" alt="AtlasOps demo results on desktop" width="600"></td>
-    <td><img src="docs/demo-mobile.jpg" alt="AtlasOps demo on mobile" width="220"></td>
-  </tr>
-</table>
-
-The Vercel demo runs without a backend: try the interactive search over bundled sample passages.
-It does not upload documents or call an AI service. The full application stack is built with
-FastAPI, Redpanda, Postgres/pgvector, Next.js, and Gemini for the planned AI question-answering
-flow.
-
-The backend includes authentication, rate limits, PDF and upload-size validation, and
-loopback-only Compose port bindings. These safeguards are part of the self-hosted backend; they
-are not exercised by the frontend-only demo.
-
-## What It Does
-
-- Ingests PDFs into per-project corpora, stored in S3-compatible object storage
-- Extracts text, chunks it with overlap, and generates 384-dimensional vector embeddings
-- Indexes chunks in Postgres with the pgvector extension for cosine-similarity search
-- Serves semantic search queries over HTTP with ranked results and similarity scores
-- Uses an event-driven ingestion pipeline (Kafka-compatible Redpanda) so upload and indexing are decoupled
+- **Auth & multi-tenancy** — Sign up, log in, create organizations and projects. JWT access tokens (argon2-hashed passwords). Rate-limited auth endpoints.
+- **PDF upload** — Files stored in MinIO/S3 (separate from the text index). 25 MB default limit. Status tracking: `uploaded` → `indexed` → `error`.
+- **Semantic search** — Embedding-based vector search with pgvector (IVFFlat index). Returns ranked passages with similarity scores. Works with local SentenceTransformer embeddings by default; optional LLM/embedding provider configuration.
+- **Background ingestion** — After upload, a `document.uploaded` event is published to Redpanda/Kafka. A worker consumes it, extracts text (pypdf), chunks it, generates embeddings, and upserts into pgvector — no blocking the upload flow.
+- **Web UI** — Next.js 16 client app: demo mode (no account required), signed-in workspace with org/project switcher, upload form with status polling, and semantic search results.
+- **API** — FastAPI backend with OpenAPI docs at `/docs`.
 
 ## Architecture
 
-Upload and query are separate paths that share a Postgres + pgvector backend.
-
 ```
-Upload path:
-  Client → POST /projects/{id}/documents
-         → MinIO (S3) + Document record
-         → emit document.uploaded to Redpanda
-         → ingestion worker consumes event
-         → PyPDF extract → chunk (1000c/200 overlap)
-         → SentenceTransformer embed (384-dim)
-         → store chunks + vectors in Postgres
-
-Query path:
-  Client → POST /projects/{id}/search
-         → encode query to 384-dim vector
-         → cosine similarity via pgvector
-         → return top-N chunks with scores
+┌─────────────┐     ┌─────────────┐     ┌──────────────┐
+│   Web UI    │────▶│    API      │────▶│   Postgres   │
+│   (Next.js) │     │  (FastAPI)  │     │   (pgvector) │
+└─────────────┘     └─────────────┘     └──────────────┘
+                          │                   ▲
+                          │ publishes         │ stores chunks +
+                          │ document.uploaded │ embeddings
+                          ▼                   │
+                   ┌─────────────┐            │
+                   │   Redpanda  │────────────┘
+                   │  (Kafka)    │
+                   └─────────────┘
+                          ▲
+                          │ consumes
+                          │
+                   ┌─────────────┐
+                   │   Worker    │────▶ MinIO (PDF files)
+                   │ (consumer)  │     separate from index
+                   └─────────────┘
 ```
 
-## Stack
+- **Document files** live in MinIO buckets — separate from the pgvector text index.
+- **Embeddings** are generated locally via `sentence-transformers` (all-MiniLM-L6-v2, 384-dim), pre-downloaded at image build time so the worker doesn't need network on first run.
+- **Rate limiting** via `slowapi` + Redis for login, register, upload, and search endpoints.
 
-| Component | Technology |
-|---|---|
-| API | Python 3, FastAPI, SQLAlchemy, Pydantic |
-| Database | Postgres 16 + pgvector |
-| Object storage | MinIO (S3-compatible) |
-| Event bus | Redpanda (Kafka-compatible) |
-| Cache | Redis 7 |
-| Embeddings | SentenceTransformer (384-dim) |
-| PDF parsing | PyPDF, 1000-char chunks, 200-char overlap |
-| Frontend | Next.js |
-| Testing | pytest + pytest-asyncio |
-| Deployment | Docker Compose |
+## Prerequisites
 
-## Quickstart
+- Docker + Docker Compose
+- ~4 GB RAM available for containers
+- Ports 5432, 6379, 9000, 9001, 19092, 8001, 3000 free on localhost
 
-Backing services run in Docker; the API runs locally against them.
+## Quick Start
+
+### 1. Clone and configure
 
 ```bash
-git clone https://github.com/shepdogg6t7-glitch/atlasops.git
-cd atlasops
-cp .env.example .env             # edit values if needed
-docker compose up -d             # Postgres, Redis, MinIO, Redpanda (ports bound to localhost)
-python -m venv .venv && source .venv/bin/activate
-pip install -r apps/api/requirements.txt
-uvicorn apps.api.main:app --reload
+cd /path/to/atlasops
+cp .env.example .env   # if an example exists; otherwise .env is already present
 ```
 
-The API is then available at http://localhost:8000. On first run,
-the SentenceTransformer model downloads automatically (~90MB).
+Review `.env` and change the defaults — especially `JWT_SECRET`, `POSTGRES_PASSWORD`, `S3_SECRET_KEY`, and `S3_ACCESS_KEY`. `JWT_SECRET` must be at least 32 random characters.
 
-To run the web app in a second terminal:
+### 2. Start the stack
+
+```bash
+docker compose up -d --build
+```
+
+This builds the `api`, `worker`, and `web` images and starts postgres, redis, minio, redpanda, api, worker, and web.
+
+### 3. Verify
+
+```bash
+# API health
+curl http://localhost:8001/health
+
+# Web UI
+open http://localhost:3000
+```
+
+All services should report `Up` or `Healthy` in `docker compose ps`.
+
+### 4. First user
+
+Register through the web UI at `http://localhost:3000` or via the API:
+
+```bash
+curl -X POST http://localhost:8001/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"email":"you@example.com","password":"Str0ng!Passw0rd","organization_name":"My Org"}'
+```
+
+Password minimum: 12 characters.
+
+## API Reference
+
+Base URL: `http://localhost:8001` (mapped from container port 8000)
+
+### Auth
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/auth/register` | Create account + organization (requires `ALLOW_REGISTRATION=true`) |
+| `POST` | `/auth/login` | Get JWT access token |
+
+Register response includes `access_token`, `token_type`, `user`, and `organizations`. Use the token as `Authorization: Bearer <token>`.
+
+### Organizations & Projects
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/organizations` | List user's organizations (Bearer auth) |
+| `POST` | `/organizations` | Create an organization |
+| `GET` | `/organizations/{org_id}/projects` | List projects in an organization |
+| `POST` | `/organizations/{org_id}/projects` | Create a project |
+
+### Documents
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/projects/{project_id}/documents` | Upload a PDF (multipart `file` field) |
+| `GET` | `/projects/{project_id}/documents` | List documents with `status` and `is_indexed` |
+
+Upload response: `{"id": "...", "filename": "...", "size_bytes": ..., "status": "uploaded", "is_indexed": false}`.
+
+### Search
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/projects/{project_id}/search` | Semantic search: `{"query": "...", "limit": 10}` |
+
+Search response: array of `{chunk_id, document_id, filename, chunk_index, text, similarity_score}`.
+
+OpenAPI docs: `http://localhost:8001/docs`
+
+## Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `JWT_SECRET` | *(required)* | Signing secret for JWT access tokens (32+ random chars) |
+| `POSTGRES_DB` | `atlasops` | Database name |
+| `POSTGRES_USER` | `atlasops` | Database user |
+| `POSTGRES_PASSWORD` | *(required)* | Database password |
+| `DATABASE_URL` | *(derived)* | Full PostgreSQL connection string |
+| `REDIS_URL` | `redis://localhost:6379` | Rate-limit storage |
+| `S3_ENDPOINT` | `http://localhost:9000` | MinIO endpoint |
+| `S3_BUCKET` | `atlasops-documents` | Bucket for document files |
+| `S3_ACCESS_KEY` | `minioadmin` | MinIO access key |
+| `S3_SECRET_KEY` | *(required)* | MinIO secret key |
+| `KAFKA_BROKERS` / `REDPANDA_BOOTSTRAP` | `localhost:19092` | Kafka bootstrap for ingestion events |
+| `ALLOW_REGISTRATION` | `true` | Allow public sign-up |
+| `MAX_UPLOAD_MB` | `25` | Max PDF upload size |
+| `RATE_LIMIT_LOGIN` | `10/minute` | Login rate limit |
+| `RATE_LIMIT_REGISTER` | `5/hour` | Registration rate limit |
+| `RATE_LIMIT_UPLOAD` | `10/minute` | Upload rate limit |
+| `RATE_LIMIT_SEARCH` | `30/minute` | Search rate limit |
+
+## Development
+
+### Backend tests
+
+```bash
+cd /path/to/atlasops
+./venv/bin/pip install -r apps/api/requirements.txt
+./venv/bin/python -m pytest apps/api/tests
+```
+
+### Frontend lint & build
 
 ```bash
 cd apps/web
-npm install
-npm run dev
+npm ci
+npm run lint
+npm run build
 ```
 
-Open http://localhost:3000 to register/sign in, create a project, and upload documents.
-Registration is enabled for local development by `.env.example`; set `ALLOW_REGISTRATION=false`
-in `.env` to disable new account creation. The API defaults to denying registration when the
-setting is unset. For a new deployment, temporarily enable registration to create the first
-account, then disable it and restart the API. Registration is a public on/off switch, not an
-invite-code system.
+## Production Notes
 
-### Deploy the interactive demo on Vercel
+- Change all default passwords/secrets in `.env` before deploying.
+- `JWT_SECRET` must be strong and unique — rotate it invalidates all existing sessions.
+- Consider placing a reverse proxy (nginx, traefik, caddy) in front of the API and web containers with TLS.
+- MinIO data persists in the `minio-data` volume; postgres data in `postgres-data`. Back these up regularly.
+- The worker does not auto-restart on crash unless `restart: unless-stopped` is set (it is in compose).
+- For closed registrations, set `ALLOW_REGISTRATION=false`.
 
-Import this GitHub repository in Vercel and set the project **Root Directory** to `apps/web`;
-Vercel will detect Next.js and use the existing build settings. The deployed page opens in demo
-mode and searches bundled sample passages without an account or backend. Live sign-in and PDF
-uploads require a publicly reachable AtlasOps API: set `NEXT_PUBLIC_API_BASE_URL` in the Vercel
-project environment variables and configure that API's `CORS_ORIGIN` for the deployed Vercel
-domain. Do not point a public deployment at `localhost`; that address refers to each visitor's
-own device.
+## Project Structure
 
-Uploads must be PDFs and are limited to 25 MB by default (`MAX_UPLOAD_MB`). Since the API checks
-the file after multipart parsing, also configure a request-body limit on any reverse proxy.
-Rate limits are enabled by default; the in-memory counter is per API process. Set
-`RATE_LIMIT_STORAGE_URI` to a shared Redis URL when running multiple workers (for the local
-quickstart, `redis://localhost:6379/0`). Rate limiting fails closed: if Redis is unavailable,
-limited requests receive `503` until it recovers. Configure Uvicorn's proxy headers with only
-your trusted proxy addresses when deployed behind a proxy.
-
-## API Endpoints
-
-- `POST /auth/register` — create an account and isolated organization; passwords must be at least 12 characters
-- `POST /auth/login` — exchange email/password credentials for a 30-minute bearer token
-- `GET /organizations` — list organizations belonging to the authenticated user
-- `GET /organizations/{organization_id}/projects` — list projects in an organization the user belongs to
-- `POST /organizations` and `POST /organizations/{organization_id}/projects` — create organizations/projects
-- `POST /projects/{project_id}/documents` — upload a PDF; creates the document record and emits an ingestion event
-- `GET /projects/{project_id}/documents` — list the authenticated user's documents in a project
-- `POST /projects/{project_id}/search` — semantic search; returns top-N chunks with similarity scores
-
-Every `/organizations` and `/projects` endpoint requires an `Authorization: Bearer <token>` header. Project access is checked against the authenticated user's organization membership. Set `JWT_SECRET` in `.env` to a randomly generated value of at least 32 characters before starting the API, for example:
-
-```bash
-python -c "import secrets; print(secrets.token_urlsafe(48))"
 ```
-
-The API will not start or issue tokens when `JWT_SECRET` is missing or invalid; no development signing key is built in. The web app defaults to `http://localhost:8000` for the API. Set `NEXT_PUBLIC_API_BASE_URL` in the web process environment or `apps/web/.env.local` when the API uses a different address. Login state is held in memory and is cleared when the page reloads. Use HTTPS when exposing the API beyond a trusted local network.
-
-See [MILESTONE_2.md](MILESTONE_2.md) for the full endpoint specification, request/response schemas, and usage examples.
-
-## Testing
-
-```bash
-pytest
+atlasops/
+├── compose.yaml                  # Docker Compose service definitions
+├── .env                          # Environment variables (create from template)
+├── docker-entrypoint.sh          # Ensures pgvector extension + IVFFlat index at startup
+├── .dockerignore                 # Build context exclusions
+├── apps/
+│   ├── api/
+│   │   ├── Dockerfile            # CPU-only torch + pre-downloaded embedding model
+│   │   ├── main.py               # FastAPI app: auth, projects, documents, search
+│   │   ├── auth.py               # JWT, argon2 password hashing
+│   │   ├── database.py           # SQLAlchemy engine + pgvector setup
+│   │   ├── storage.py            # MinIO/S3 object storage
+│   │   ├── uploads.py            # PDF validation + size limits
+│   │   ├── consumer.py           # Kafka consumer: extract, chunk, embed, upsert
+│   │   ├── ratelimit.py          # slowapi rate limiting
+│   │   ├── requirements.txt      # Python dependencies
+│   │   ├── migrations/           # SQL migrations (pgvector, auth tables)
+│   │   └── tests/                # Pytest suite (31 tests)
+│   └── web/
+│       ├── Dockerfile            # Next.js 16 production build
+│       ├── app/page.tsx          # Demo + signed-in workspace UI
+│       ├── package.json
+│       └── postcss.config.mjs    # Tailwind CSS v4
+├── examples/
+│   └── sample-documents/         # Sample PDF for testing
+└── docs/                         # ADR, architecture, operations, security docs
 ```
-
-Test configuration is in `pytest.ini` (asyncio auto mode, tests under `apps/api/tests/`). A full verification report from the Milestone 2 review is in [VERIFICATION_REPORT.md](VERIFICATION_REPORT.md); the milestone-specific report is in [MILESTONE_2_VERIFICATION.md](MILESTONE_2_VERIFICATION.md).
-
-## Project Status
-
-- **Milestone 1** — Foundation: API, database schema, object storage, project and document models — done
-- **Milestone 2** — Semantic search: pgvector indexing, embedding pipeline, ingestion worker, search endpoint — done
-- **Milestone 3** — Planned
-
-## Documentation
-
-- [`docs/adr/`](docs/adr/) — architecture decision records
-- [`docs/architecture/`](docs/architecture/) — system architecture notes
-- [`docs/operations/`](docs/operations/) — operational runbooks
-- [`docs/security/`](docs/security/) — security posture and threat model
-- [`MILESTONE_2.md`](MILESTONE_2.md) — full Milestone 2 design and implementation
-- [`examples/`](examples/) — sample documents and evaluation dataset
 
 ## License
 
-Apache 2.0 — see [LICENSE](LICENSE).
+Internal / proprietary.
