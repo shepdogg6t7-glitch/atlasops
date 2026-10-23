@@ -28,7 +28,7 @@ services:
       - redis-data:/data
 
   minio:
-    image: docker.io/minio/minio:latest
+    image: docker.io/pgsty/minio:latest
     container_name: atlasops-minio
     restart: unless-stopped
     command: server /data --console-address ":9001"
