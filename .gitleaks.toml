@@ -1,0 +1,37 @@
+[rules]
+  [[rules]]
+  id = "aws"
+  description = "AWS Access Key"
+  regex = '(?i)aws(.{0,20})?(0|9|A|a)([0-9A-Z]{16})'
+  secretGroup = 1
+
+  [[rules]]
+  id = "generic-api-key"
+  description = "Generic API Key"
+  regex = '(?i)(api|secret|private|access)_?key(.{0,20})?[=:\s]+([A-Za-z0-9\-_]{16,})'
+  secretGroup = 3
+
+  [[rules]]
+  id = "github"
+  description = "GitHub Access Token"
+  regex = '(gh[pousr]_[A-Za-z0-9_]{36,255})'
+  secretGroup = 1
+
+  [[rules]]
+  id = "slack"
+  description = "Slack Token"
+  regex = '(xox[baprs]-([0-9a-zA-Z]{10,48}))'
+  secretGroup = 1
+
+  [[rules]]
+  id = "private-key"
+  description = "Private Key"
+  regex = '-----BEGIN [A-Z ]*PRIVATE KEY-----'
+  secretGroup = 0
+
+[allowlist]
+  description = "Allowlist rules for false positives"
+  [[allowlist.reason]]
+  id = "test-secrets"
+  reason = "Test fixture secrets used in test suite"
+  regex = '(test|example|fake|dummy|changeme|your-secret-here)'

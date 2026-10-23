@@ -172,6 +172,7 @@ npm run build
 - `JWT_SECRET` must be strong and unique — rotating it invalidates all existing sessions.
 - Consider placing a reverse proxy (nginx, traefik, caddy) in front of the API and web containers with TLS. Behind a proxy, rate limiting falls back to the proxy IP unless you forward `X-Forwarded-For`; configure your proxy to pass it through.
 - MinIO data persists in the `minio-data` volume; postgres data in `postgres-data`. Back these up regularly.
+- MinIO image source: upstream `minio/minio` was archived in October 2025 and removed from Docker Hub in September 2026. This project uses `pgsty/minio`, a maintained community fork, pinned to digest `sha256:b6bfe7239bfc83fb90d31612d9704d86039dd714f7904b3f1ad68f211e602372` for fresh-installs and supply-chain integrity.
 - The worker restarts automatically (`restart: unless-stopped` in compose).
 - For closed registrations, set `ALLOW_REGISTRATION=false`.
 
