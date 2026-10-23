@@ -14,28 +14,28 @@ Self-hosted document intelligence platform. Upload PDFs, organize them into proj
 ## Architecture
 
 ```
-┌─────────────┐     ┌─────────────┐     ┌──────────────┐
-│   Web UI    │────▶│    API      │────▶│   Postgres   │
-│   (Next.js) │     │  (FastAPI)  │     │   (pgvector) │
-└─────────────┘     └─────────────┘     └──────────────┘
-                          │                   ▲
-                          │ publishes         │ stores chunks +
-                          │ document.uploaded │ embeddings
-                          ▼                   │
-                   ┌─────────────┐            │
-                   │   Redpanda  │────────────┘
-                   │  (Kafka)    │
-                   └─────────────┘
-                          ▲
-                          │ consumes
-                          │
-                   ┌─────────────┐
-                   │   Worker    │────▶ MinIO (PDF files)
-                   │ (consumer)  │     separate from index
-                   └─────────────┘
+┌─────────────┐     ┌─────────────┐     ┌──────────────┐     ┌──────────┐
+│   Web UI    │────▶│    API      │────▶│   Postgres   │     │  MinIO   │
+│   (Next.js) │     │  (FastAPI)  │     │   (pgvector) │     │  (S3)    │
+└─────────────┘     └─────────────┘     └──────────────┘     └──────────┘
+        │               │                   ▲              ▲
+        │               │ stores PDFs       │ stores chunks│
+        │               └──────────────────▶│ + embeddings │
+        ▼                                   │              │
+     ┌─────────────┐            │            │              │
+     │   Redpanda  │────────────┘            │              │
+     │  (Kafka)    │                         │              │
+     └─────────────┘                         │              │
+           ▲                                 │              │
+           │ consumes                        │              │
+           │                                 │              │
+     ┌─────────────┐                         │              │
+     │   Worker    │─────────────────────────┴──────────────┘
+     │ (consumer)  │     reads PDFs from MinIO
+     └─────────────┘
 ```
 
-- **Document files** live in MinIO buckets — separate from the pgvector text index.
+- **Document files** live in MinIO buckets — the API writes uploads there; the worker reads them back for text extraction. MinIO is separate from the pgvector text index.
 - **Embeddings** are generated locally via `sentence-transformers` (all-MiniLM-L6-v2, 384-dim), pre-downloaded at image build time so the worker doesn't need network on first run.
 - **Rate limiting** via `slowapi` + Redis for login, register, upload, and search endpoints.
 
@@ -51,7 +51,7 @@ Self-hosted document intelligence platform. Upload PDFs, organize them into proj
 
 ```bash
 cd /path/to/atlasops
-cp .env.example .env   # if an example exists; otherwise .env is already present
+cp .env.example .env
 ```
 
 Review `.env` and change the defaults — especially `JWT_SECRET`, `POSTGRES_PASSWORD`, `S3_SECRET_KEY`, and `S3_ACCESS_KEY`. `JWT_SECRET` must be at least 32 random characters.
@@ -71,7 +71,7 @@ This builds the `api`, `worker`, and `web` images and starts postgres, redis, mi
 curl http://localhost:8001/health
 
 # Web UI
-open http://localhost:3000
+http://localhost:3000
 ```
 
 All services should report `Up` or `Healthy` in `docker compose ps`.
@@ -134,7 +134,7 @@ OpenAPI docs: `http://localhost:8001/docs`
 | `POSTGRES_USER` | `atlasops` | Database user |
 | `POSTGRES_PASSWORD` | *(required)* | Database password |
 | `DATABASE_URL` | *(derived)* | Full PostgreSQL connection string |
-| `REDIS_URL` | `redis://localhost:6379` | Rate-limit storage |
+| `REDIS_URL` | `redis://localhost:6379` (host dev) / `redis://redis:6379` (inside Compose) | Rate-limit storage |
 | `S3_ENDPOINT` | `http://localhost:9000` | MinIO endpoint |
 | `S3_BUCKET` | `atlasops-documents` | Bucket for document files |
 | `S3_ACCESS_KEY` | `minioadmin` | MinIO access key |
@@ -169,11 +169,44 @@ npm run build
 ## Production Notes
 
 - Change all default passwords/secrets in `.env` before deploying.
-- `JWT_SECRET` must be strong and unique — rotate it invalidates all existing sessions.
-- Consider placing a reverse proxy (nginx, traefik, caddy) in front of the API and web containers with TLS.
+- `JWT_SECRET` must be strong and unique — rotating it invalidates all existing sessions.
+- Consider placing a reverse proxy (nginx, traefik, caddy) in front of the API and web containers with TLS. Behind a proxy, rate limiting falls back to the proxy IP unless you forward `X-Forwarded-For`; configure your proxy to pass it through.
 - MinIO data persists in the `minio-data` volume; postgres data in `postgres-data`. Back these up regularly.
-- The worker does not auto-restart on crash unless `restart: unless-stopped` is set (it is in compose).
+- The worker restarts automatically (`restart: unless-stopped` in compose).
 - For closed registrations, set `ALLOW_REGISTRATION=false`.
+
+## Security controls
+
+Upload request path, traced from `apps/api/main.py`, `ratelimit.py`, and `uploads.py`:
+
+```mermaid
+flowchart TD
+  REQ["POST /projects/:id/documents"] --> AUTH["Authenticate user"]
+  AUTH -->|"Invalid or missing token"| R0["Reject (401)"]
+  AUTH --> RL{"Rate limit: upload, keyed by user ID"}
+  RL -->|"Limit exceeded"| E429["429 Too Many Requests"]
+  RL -->|"Redis error, fail closed"| E503A["503 Service Unavailable"]
+  RL -->|Allowed| MEM{"Project member?"}
+  MEM -->|No| R1["Reject (403)"]
+  MEM -->|Yes| EVT{"Event producer available?"}
+  EVT -->|No| E503B["503 Event service unavailable"]
+  EVT -->|Yes| CL{"Declared Content-Length"}
+  CL -->|Invalid| E400A["400 Invalid Content-Length"]
+  CL -->|"Over limit plus 64 KB overhead"| E413A["413 File too large"]
+  CL -->|OK| FILE{"Actual file bytes"}
+  FILE -->|Empty| E400B["400 Empty file"]
+  FILE -->|"Over size limit"| E413B["413 File too large"]
+  FILE -->|"PDF signature missing"| E415["415 Only PDF accepted"]
+  FILE -->|Valid| FN["Sanitize filename, max 200 chars"]
+  FN --> ST["Store in MinIO: project_id/uuid-filename"]
+  ST --> DB["Save record, status uploaded"]
+  DB --> Q["Publish document.uploaded to Redpanda"]
+```
+
+- **Rate limits:** registration, login, upload, and search each have a separate limit. The key is the user ID from a valid token, otherwise the client IP. Over the limit returns 429. If Redis or the limiter's storage fails, the request returns 503 and does not go through.
+- **Upload validation:** the declared Content-Length is checked first to reject early. The received file's real size, emptiness, and PDF signature are then checked. The default limit is 25 MB, set with `MAX_UPLOAD_MB`.
+- **Storage:** files are stored under a random UUID, and filenames are sanitized and capped at 200 characters.
+- **Known limits:** the PDF signature check filters file type and does not scan for malware. Requests with no Content-Length are size-checked only after the body is received.
 
 ## Project Structure
 
@@ -208,39 +241,4 @@ atlasops/
 
 ## License
 
-## License
-
-Internal / proprietary.
-
-## Security controls
-
-Upload request path, traced from `apps/api/main.py`, `ratelimit.py`, and `uploads.py`:
-
-```mermaid
-flowchart TD
-  REQ["POST /projects/:id/documents"] --> AUTH["Authenticate user"]
-  AUTH -->|"Invalid or missing token"| R0["Reject"]
-  AUTH --> RL{"Rate limit: upload, keyed by user ID"}
-  RL -->|"Limit exceeded"| E429["429 Too Many Requests"]
-  RL -->|"Redis error, fail closed"| E503A["503 Service Unavailable"]
-  RL -->|Allowed| MEM{"Project member?"}
-  MEM -->|No| R1["Reject"]
-  MEM -->|Yes| EVT{"Event producer available?"}
-  EVT -->|No| E503B["503 Event service unavailable"]
-  EVT -->|Yes| CL{"Declared Content-Length"}
-  CL -->|Invalid| E400A["400 Invalid Content-Length"]
-  CL -->|"Over limit plus 64 KB overhead"| E413A["413 File too large"]
-  CL -->|OK| FILE{"Actual file bytes"}
-  FILE -->|Empty| E400B["400 Empty file"]
-  FILE -->|"Over size limit"| E413B["413 File too large"]
-  FILE -->|"PDF signature missing"| E415["415 Only PDF accepted"]
-  FILE -->|Valid| FN["Sanitize filename, max 200 chars"]
-  FN --> ST["Store in MinIO: project_id/uuid-filename"]
-  ST --> DB["Save record, status uploaded"]
-  DB --> Q["Publish document.uploaded to Redpanda"]
-```
-
-- **Rate limits:** registration, login, upload, and search each have a separate limit. The key is the user ID from a valid token, otherwise the client IP. Over the limit returns 429. If Redis or the limiter's storage fails, the request returns 503 and does not go through.
-- **Upload validation:** the declared Content-Length is checked first to reject early. The received file's real size, emptiness, and PDF signature are then checked. The default limit is 25 MB, set with `MAX_UPLOAD_MB`.
-- **Storage:** files are stored under a random UUID, and filenames are sanitized and capped at 200 characters.
-- **Known limits:** the PDF signature check filters file type and does not scan for malware. Requests with no Content-Length are size-checked only after the body is received.
+MIT — see [LICENSE](LICENSE).
