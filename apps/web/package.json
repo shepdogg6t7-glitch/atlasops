@@ -10,7 +10,7 @@
     "deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy"
   },
   "dependencies": {
-    "next": "16.4.0",
+    "next": "^16.4.3",
     "react": "19.2.8",
     "react-dom": "19.2.8"
   },
