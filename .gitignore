@@ -46,3 +46,12 @@ secrets/
 !.vscode/settings.json
 .idea/
 *.bak
+
+# Local secrets and build output
+.dev.vars
+.dev.vars.*
+.env
+.env.*
+apps/web/.open-next/
+apps/web/.wrangler/
+apps/web/worker-configuration.d.ts
