@@ -27,19 +27,19 @@ services:
     volumes:
       - redis-data:/data
 
-  minio:
-    image: docker.io/pgsty/minio@sha256:b6bfe7239bfc83fb90d31612d9704d86039dd714f7904b3f1ad68f211e602372
+  seaweedfs:
+    image: chrislusf/seaweedfs:latest
     container_name: atlasops-minio
     restart: unless-stopped
-    command: server /data --console-address ":9001"
+    command: server -s3 -dir=/data
     environment:
-      MINIO_ROOT_USER: ${S3_ACCESS_KEY}
-      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY}
+      S3_SECRET_KEY: ${S3_SECRET_KEY}
     ports:
-      - "127.0.0.1:9000:9000"
-      - "127.0.0.1:9001:9001"
+      - "127.0.0.1:9000:8333"
+      - "127.0.0.1:9001:8334"
     volumes:
-      - minio-data:/data
+      - seaweedfs-data:/data
 
   redpanda:
     image: docker.redpanda.com/redpandadata/redpanda:v26.2.5@sha256:badca2d958f81da675c3055a9ecb6ebb590325582bcf16936148ffd65e96e920
@@ -140,5 +140,5 @@ services:
 volumes:
   postgres-data:
   redis-data:
-  minio-data:
+  seaweedfs-data:
   redpanda-data:
