@@ -46,3 +46,9 @@ secrets/
 !.vscode/settings.json
 .idea/
 *.bak
+
+# Local secrets
+.dev.vars
+.dev.vars.*
+.env
+.env.*
