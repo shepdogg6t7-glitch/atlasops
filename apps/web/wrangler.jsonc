@@ -1,0 +1,7 @@
+{
+  "name": "atlasops",
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2026-10-25",
+  "compatibility_flags": ["nodejs_compat"],
+  "upload_source_maps": false
+}
