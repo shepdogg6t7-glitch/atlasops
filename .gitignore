@@ -52,3 +52,7 @@ secrets/
 .dev.vars.*
 .env
 .env.*
+
+# Cloudflare build output
+apps/web/.open-next/
+apps/web/.wrangler/
