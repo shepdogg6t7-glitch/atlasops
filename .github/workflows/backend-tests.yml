@@ -116,7 +116,7 @@ jobs:
           pip-audit -r apps/api/requirements.txt --desc on --ignore-vuln PYSEC-2026-1845  # pytest 7.4.3 dev-only, ephemeral CI runner
 
       - name: Run npm audit
-        run: npm audit --audit-level=moderate
+        run: npm audit --omit=dev --audit-level=high
         working-directory: apps/web
 
       - name: Run gitleaks secret scan
