@@ -43,7 +43,7 @@ Self-hosted document intelligence platform. Upload PDFs, organize them into proj
 
 - Docker + Docker Compose
 - ~4 GB RAM available for containers
-- Ports 5432, 6379, 9000, 9001, 19092, 8001, 3000 free on localhost
+- Ports 5432, 6379, 8333, 19092, 8001, 3000 free on localhost
 
 ## Quick Start
 
@@ -62,7 +62,7 @@ Review `.env` and change the defaults — especially `JWT_SECRET`, `POSTGRES_PAS
 docker compose up -d --build
 ```
 
-This builds the `api`, `worker`, and `web` images and starts postgres, redis, minio, redpanda, api, worker, and web.
+This builds the `api`, `worker`, and `web` images and starts postgres, redis, seaweedfs, redpanda, api, worker, and web.
 
 ### 3. Verify
 
@@ -135,10 +135,10 @@ OpenAPI docs: `http://localhost:8001/docs`
 | `POSTGRES_PASSWORD` | *(required)* | Database password |
 | `DATABASE_URL` | *(derived)* | Full PostgreSQL connection string |
 | `REDIS_URL` | `redis://localhost:6379` (host dev) / `redis://redis:6379` (inside Compose) | Rate-limit storage |
-| `S3_ENDPOINT` | `http://localhost:9000` | MinIO endpoint |
+| `S3_ENDPOINT` | `http://localhost:8333` | SeaweedFS endpoint |
 | `S3_BUCKET` | `atlasops-documents` | Bucket for document files |
-| `S3_ACCESS_KEY` | `minioadmin` | MinIO access key |
-| `S3_SECRET_KEY` | *(required)* | MinIO secret key |
+| `S3_ACCESS_KEY` | `minioadmin` | SeaweedFS access key |
+| `S3_SECRET_KEY` | *(required)* | SeaweedFS secret key |
 | `KAFKA_BROKERS` / `REDPANDA_BOOTSTRAP` | `localhost:19092` | Kafka bootstrap for ingestion events |
 | `ALLOW_REGISTRATION` | `true` | Allow public sign-up |
 | `MAX_UPLOAD_MB` | `25` | Max PDF upload size |
@@ -171,8 +171,8 @@ npm run build
 - Change all default passwords/secrets in `.env` before deploying.
 - `JWT_SECRET` must be strong and unique — rotating it invalidates all existing sessions.
 - Consider placing a reverse proxy (nginx, traefik, caddy) in front of the API and web containers with TLS. Behind a proxy, rate limiting falls back to the proxy IP unless you forward `X-Forwarded-For`; configure your proxy to pass it through.
-- MinIO data persists in the `minio-data` volume; postgres data in `postgres-data`. Back these up regularly.
-- MinIO image source: upstream `minio/minio` was archived in October 2025 and removed from Docker Hub in September 2026. This project uses `pgsty/minio`, a maintained community fork, pinned to digest `sha256:b6bfe7239bfc83fb90d31612d9704d86039dd714f7904b3f1ad68f211e602372` for fresh-installs and supply-chain integrity.
+- SeaweedFS data persists in the `seaweedfs-data` volume; postgres data in `postgres-data`. Back these up regularly.
+- SeaweedFS image: `chrislusf/seaweedfs`, pinned to a multi-platform digest for supply-chain integrity. To migrate from MinIO, copy objects from the old `minio-data` volume into `seaweedfs-data` before switching, or re-upload documents after the app recreates the bucket via its S3 `ensure_bucket()` startup step.
 - The worker restarts automatically (`restart: unless-stopped` in compose).
 - For closed registrations, set `ALLOW_REGISTRATION=false`.
 
