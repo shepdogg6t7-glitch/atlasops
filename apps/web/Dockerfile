@@ -1,7 +1,9 @@
 FROM node:24-slim
 
+ARG NEXT_PUBLIC_API_BASE_URL=http://localhost:8001
+
 ENV NODE_ENV=production \
-    NEXT_PUBLIC_API_BASE_URL=http://localhost:3000
+    NEXT_PUBLIC_API_BASE_URL=$NEXT_PUBLIC_API_BASE_URL
 
 WORKDIR /app
 
