@@ -2,5 +2,12 @@
 useDefault = true
 
 [allowlist]
-description = "Placeholder secrets that are not real credentials"
-paths = ['''.env.example$''']
+description = "Placeholder secrets and generated output that are not real credentials"
+paths = [
+  '''\.env\.example$''',
+  '''apps/web/\.open-next/''',
+]
+regexes = [
+  '''test-signing-secret-that-is-long-enough-123456''',
+  '''test-secret-key-that-is-at-least-32-chars-long''',
+]
